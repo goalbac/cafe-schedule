@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>카페 근무표 자동생성기 v2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-brand">
+    <span class="topbar-icon">☕</span>
+    <span class="topbar-title">카페 근무표 자동생성기 v2</span>
+  </div>
+  <div class="topbar-status" id="statusText">초기화 중...</div>
+</header>
+
+<div class="app-layout">
+
+  <!-- ── 왼쪽 사이드바 ── -->
+  <aside class="sidebar">
+  <div class="sidebar-inner">
+
+    <!-- 1. 사이클 네비게이션 -->
+    <div class="sc-cycle-card">
+      <div class="cycle-nav">
+        <button id="prevCycleBtn" class="cycle-btn">◀</button>
+        <div class="cycle-info">
+          <span id="cycleLabel" class="cycle-label">사이클 #—</span>
+          <span id="cycleDateRange" class="cycle-range">—</span>
+        </div>
+        <button id="nextCycleBtn" class="cycle-btn">▶</button>
+        <button id="todayCycleBtn" class="cycle-today">오늘</button>
+      </div>
+    </div>
+
+    <!-- 2. 직원 세팅 -->
+    <div class="sc-card">
+      <div class="accordion-header is-open" data-target="empBody">
+        <span class="sc-icon">👤</span>
+        <span class="sc-title">직원 세팅</span>
+        <span class="acc-arrow">▾</span>
+      </div>
+      <div class="accordion-body" id="empBody">
+        <label class="field-row">
+          <span class="field-label">기준일 (일요일)</span>
+          <input type="date" id="epochInput" class="sc-input">
+        </label>
+        <div class="emp-grid">
+          <div class="emp-card">
+            <input type="text" class="emp-input" data-idx="0" placeholder="직원1">
+            <button class="star-btn" data-idx="0" title="공휴일 마감 선호">☆</button>
+          </div>
+          <div class="emp-card">
+            <input type="text" class="emp-input" data-idx="1" placeholder="직원2">
+            <button class="star-btn" data-idx="1" title="공휴일 마감 선호">☆</button>
+          </div>
+          <div class="emp-card">
+            <input type="text" class="emp-input" data-idx="2" placeholder="직원3">
+            <button class="star-btn" data-idx="2" title="공휴일 마감 선호">☆</button>
+          </div>
+          <div class="emp-card">
+            <input type="text" class="emp-input" data-idx="3" placeholder="직원4">
+            <button class="star-btn" data-idx="3" title="공휴일 마감 선호">☆</button>
+          </div>
+        </div>
+        <p class="sc-hint">⭐ 별표 = 공휴일 마감 선호 직원</p>
+      </div>
+    </div>
+
+    <!-- 3. 배정 요청 -->
+    <div class="sc-card">
+      <div class="accordion-header is-open" data-target="reqBody">
+        <span class="sc-icon">📋</span>
+        <span class="sc-title">배정 요청</span>
+        <span id="requestBadge" class="req-badge" style="display:none">0</span>
+        <span class="acc-arrow">▾</span>
+      </div>
+      <div class="accordion-body" id="reqBody">
+        <div class="req-add-rows">
+          <div class="req-add-row">
+            <select id="leaveEmpSelect" class="sc-select">
+              <option value="0">직원1</option>
+              <option value="1">직원2</option>
+              <option value="2">직원3</option>
+              <option value="3">직원4</option>
+            </select>
+            <input type="date" id="leaveDateInput" class="sc-input">
+          </div>
+          <div class="req-add-row">
+            <select id="leaveTypeSelect" class="sc-select">
+              <option value="O">오픈</option>
+              <option value="C">마감</option>
+              <option value="OFF">휴무</option>
+            </select>
+            <button id="addLeaveBtn" class="btn btn-add">추가</button>
+          </div>
+        </div>
+        <p class="req-cycle-label" id="reqCycleLabel"></p>
+        <div id="leaveList"><p class="sc-hint sc-hint-center">이 사이클에 등록된 요청이 없습니다.</p></div>
+      </div>
+    </div>
+
+    <!-- 4. 일정 생성 -->
+    <div class="sc-generate-card">
+      <button id="generateBtn" class="btn-generate">이 사이클 일정 생성</button>
+    </div>
+
+    <!-- 5. 하드 조건 -->
+    <div class="sc-card">
+      <div class="accordion-header is-open" data-target="hardBody">
+        <span class="sc-title">하드 조건</span>
+        <span id="hardOverall" class="acc-overall"></span>
+        <span class="acc-arrow">▾</span>
+      </div>
+      <div class="accordion-body accordion-body--cond" id="hardBody">
+        <div id="hardConditions"><p class="cond-placeholder">일정을 먼저 생성하세요.</p></div>
+      </div>
+    </div>
+
+    <!-- 6. 소프트 조건 -->
+    <div class="sc-card">
+      <div class="accordion-header" data-target="softBody">
+        <span class="sc-title">소프트 조건</span>
+        <span id="softOverall" class="acc-overall"></span>
+        <span class="acc-arrow">▶</span>
+      </div>
+      <div class="accordion-body accordion-body--cond" id="softBody" style="display:none">
+        <div id="softConditions"></div>
+      </div>
+    </div>
+
+    <!-- 7. 공휴일 관리 -->
+    <div class="sc-card">
+      <div class="accordion-header" data-target="holidayBody">
+        <span class="sc-title">공휴일 관리</span>
+        <span class="acc-arrow">▶</span>
+      </div>
+      <div class="accordion-body" id="holidayBody" style="display:none">
+        <div class="holiday-add-row">
+          <input type="date" id="holidayDateInput" class="sc-input">
+          <input type="text" id="holidayNameInput" placeholder="공휴일 이름" class="sc-input">
+          <button id="addHolidayBtn" class="btn btn-sm">추가</button>
+        </div>
+        <div id="holidayList"></div>
+      </div>
+    </div>
+
+  </div><!-- sidebar-inner -->
+  </aside>
+
+  <!-- ── 오른쪽 콘텐츠 ── -->
+  <div class="content-panel">
+    <div class="content-header">
+      <p class="cell-hint">셀 <b>좌클릭</b>: 오픈 → 마감 → 휴무 순환 &nbsp;|&nbsp; 셀 <b>우클릭</b>: 고정 배정</p>
+      <div class="export-buttons">
+        <button id="exportImageBtn" class="btn">🖼 이미지</button>
+        <button id="exportCsvBtn"   class="btn">📄 CSV</button>
+      </div>
+    </div>
+    <div id="scheduleContainer"></div>
+  </div>
+
+</div>
+
+<!-- 우클릭 컨텍스트 메뉴 -->
+<div id="contextMenu" class="context-menu hidden">
+  <div class="cm-item" data-action="O">🔒 오픈 고정</div>
+  <div class="cm-item" data-action="C">🔒 마감 고정</div>
+  <div class="cm-item" data-action="OFF">🔒 휴무 고정</div>
+  <div class="cm-item" data-action="HOLIDAY_OFF">🔒 휴일 휴무 고정</div>
+  <div class="cm-separator"></div>
+  <div class="cm-item cm-clear" data-action="clear">🔓 고정 해제</div>
+</div>
+
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="storage.js"></script>
+<script src="export.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

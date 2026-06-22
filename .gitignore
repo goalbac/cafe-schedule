@@ -1,0 +1,18 @@
+node_modules/
+dist/
+release/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Electron build output
+out/
+
+# Claude Code 로컬 설정 (개인 권한 설정)
+.claude/settings.local.json
+
+# 로컬 데이터 (민감 정보)
+data/*.json
