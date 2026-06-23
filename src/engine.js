@@ -106,9 +106,10 @@
     });
   }
 
-  // ── 고정 배정을 고려한 주별 자유 할당량 행렬 계산 ─────────────────────────
-  // freeOpen[w][e], freeOff[w][e]: SA가 자유롭게 배정할 수 있는 횟수
-  // 고정 배정이 목표치를 초과하면 다른 주에서 차감하여 사이클 총량 유지
+  // ── 고정 배정을 고려한 주별 SA 할당량 계산 ───────────────────────────────
+  // 핵심 불변식: 각 주당 합계가 반드시 7이어야 함
+  // (SA는 항상 주당 7개 페어를 생성해야 assemble이 28개 원소를 만들 수 있음)
+  // 고정 배정이 목표치를 초과하면 같은 주의 다른 직원에게 슬롯을 재배분
   function computeFreeQuotas(calDays, fixedSlots, cfg) {
     const N = cfg.numEmployees, W = cfg.cycleWeeks;
 
@@ -123,61 +124,29 @@
       if (fix.offp   !== null) fixedOff[w][fix.offp]++;
     });
 
-    // 자유 할당량 초기값: 목표 - 고정 (음수 방지)
-    const freeOpen = Array.from({ length: W }, (_, w) =>
-      Array.from({ length: N }, (_, e) => Math.max(0, targetOpenForWeek(e, w, cfg) - fixedOpen[w][e])));
-    const freeOff = Array.from({ length: W }, (_, w) =>
-      Array.from({ length: N }, (_, e) => Math.max(0, targetOffForWeek(e, w, cfg) - fixedOff[w][e])));
+    // 주별 SA 할당량: 목표 - 고정 (음수→0), 합계를 정확히 7로 맞춤
+    function buildWeekQuota(w, targetFn, fixedM) {
+      const counts = Array.from({ length: N }, (_, e) =>
+        Math.max(0, targetFn(e, w, cfg) - fixedM[w][e]));
+      let sum = counts.reduce((a, b) => a + b, 0);
 
-    // 주당 자유 슬롯 수 (= 7 - 해당 주의 고정 수)
-    const freeOpenerSlots = Array.from({ length: W }, (_, w) => 7 - fixedOpen[w].reduce((a, b) => a + b, 0));
-    const freeOffpSlots   = Array.from({ length: W }, (_, w) => 7 - fixedOff[w].reduce((a, b) => a + b, 0));
-
-    // 열 합(주별 합)이 실제 자유 슬롯 수와 맞도록 조정
-    // 초과분은 가장 많이 가진 직원에서 제거하고, 그 직원의 다른 주에서 보상
-    function adjustMatrix(freeM, slotCounts) {
-      for (let w = 0; w < W; w++) {
-        let colSum = freeM[w].reduce((a, b) => a + b, 0);
-        const target = slotCounts[w];
-
-        while (colSum > target) {
-          // 이 주에서 가장 많이 배정된 직원 선택
-          let maxE = 0;
-          for (let e = 1; e < N; e++) { if (freeM[w][e] > freeM[w][maxE]) maxE = e; }
-          freeM[w][maxE]--;
-          // 다른 주에서 보상 (가장 적은 주에 추가)
-          let minW = -1, minV = Infinity;
-          for (let ww = 0; ww < W; ww++) {
-            if (ww === w && freeM[ww][maxE] < minV) { minV = freeM[ww][maxE]; minW = ww; }
-            else if (ww !== w && freeM[ww][maxE] < minV) { minV = freeM[ww][maxE]; minW = ww; }
-          }
-          // 다른 주 우선
-          let compensateW = -1, compensateV = Infinity;
-          for (let ww = 0; ww < W; ww++) {
-            if (ww !== w && freeM[ww][maxE] < compensateV) { compensateV = freeM[ww][maxE]; compensateW = ww; }
-          }
-          if (compensateW !== -1) freeM[compensateW][maxE]++;
-          colSum--;
-        }
-
-        while (colSum < target) {
-          // 이 주에서 가장 적게 배정된 직원에게 추가
-          let minE = 0;
-          for (let e = 1; e < N; e++) { if (freeM[w][e] < freeM[w][minE]) minE = e; }
-          freeM[w][minE]++;
-          // 다른 주에서 차감
-          let maxW = -1, maxV = -1;
-          for (let ww = 0; ww < W; ww++) {
-            if (ww !== w && freeM[ww][minE] > maxV) { maxV = freeM[ww][minE]; maxW = ww; }
-          }
-          if (maxW !== -1 && freeM[maxW][minE] > 0) freeM[maxW][minE]--;
-          colSum++;
-        }
+      // 합 < 7: 가장 적은 직원에게 슬롯 추가 (분산 배분)
+      while (sum < 7) {
+        let minI = 0;
+        for (let e = 1; e < N; e++) { if (counts[e] < counts[minI]) minI = e; }
+        counts[minI]++; sum++;
       }
+      // 합 > 7: 가장 많은 직원에서 슬롯 제거
+      while (sum > 7) {
+        let maxI = 0;
+        for (let e = 1; e < N; e++) { if (counts[e] > counts[maxI]) maxI = e; }
+        counts[maxI]--; sum--;
+      }
+      return counts;
     }
 
-    adjustMatrix(freeOpen, freeOpenerSlots);
-    adjustMatrix(freeOff, freeOffpSlots);
+    const freeOpen = Array.from({ length: W }, (_, w) => buildWeekQuota(w, targetOpenForWeek, fixedOpen));
+    const freeOff  = Array.from({ length: W }, (_, w) => buildWeekQuota(w, targetOffForWeek, fixedOff));
 
     return { freeOpen, freeOff, fixedOpen, fixedOff };
   }
