@@ -573,9 +573,18 @@
 
   async function onExportXLSX() {
     if (!cycleData) { alert('먼저 일정을 생성하세요.'); return; }
-    const wb = ExportUtil.buildXLSX(cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks, getHolidaySet(), getHolidayMap(), storageData.fixedAssignments);
-    if (!wb) return;
-    XLSX.writeFile(wb, `근무표_사이클${cycleIndex+1}_${cycleData.cycleStartIso}.xlsx`);
+    const buffer = await ExportUtil.buildXLSX(
+      cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks,
+      getHolidaySet(), getHolidayMap(), storageData.fixedAssignments
+    );
+    if (!buffer) return;
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `근무표_사이클${cycleIndex + 1}_${cycleData.cycleStartIso}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // ── JSON 내보내기/가져오기 ────────────────────────────────────────────────

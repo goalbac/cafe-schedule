@@ -188,45 +188,36 @@
     return lines.join('\n');
   }
 
-  // ── XLSX 내보내기 (스타일 포함) ──────────────────────────────────────────
-  // SheetJS cdn.sheetjs.com xlsx-0.20.3 이상 필요 (스타일 지원)
-  function buildXLSX(scheduleData, employees, cycleIndex, selectedWeeks, holidayIsoSet, holidayMap, fixedAssignments) {
-    if (typeof XLSX === 'undefined') {
-      alert('XLSX 라이브러리가 로드되지 않았습니다.');
+  // ── XLSX 내보내기 (ExcelJS — 스타일 완전 지원) ───────────────────────────
+  // unpkg.com/exceljs@4.4.0/dist/exceljs.min.js 필요 — index.html에서 로드
+  async function buildXLSX(scheduleData, employees, cycleIndex, selectedWeeks, holidayIsoSet, holidayMap, fixedAssignments) {
+    if (typeof ExcelJS === 'undefined') {
+      alert('ExcelJS 라이브러리가 로드되지 않았습니다.');
       return null;
     }
     const { days } = scheduleData;
     const weeksToExport = [0, 1, 2, 3].filter(w => selectedWeeks.has(w));
-    holidayMap      = holidayMap      || {};
+    holidayMap       = holidayMap       || {};
     fixedAssignments = fixedAssignments || {};
 
-    // ── 색상 팔레트 (ARGB hex, SheetJS 형식) ──
+    // ── 색상 팔레트 (ARGB: FF + hex6) ──
+    const A = hex => 'FF' + hex;
     const C = {
-      hdrDefault : '1E293B', hdrWeekend: '1D4ED8',
-      hdrHoliday : 'B91C1C', hdrHolWkd : '7C1C1C',
-      cellO      : 'FFD9A8', cellC      : 'BCD4FF',
-      cellOff    : 'E2E2E2', cellFixed  : 'F1F5F9',
-      weekTitle  : 'FEF9C3', titleBg    : 'F0F9FF',
-      empName    : 'F8FAFC', white      : 'FFFFFF',
-      border     : 'CBD5E1', borderFixed: '475569',
-      textDark   : '0F172A', textLight  : 'FFFFFF',
-      textMuted  : '64748B',
+      hdrDefault: '1E293B', hdrWeekend: '1D4ED8',
+      hdrHoliday: 'B91C1C', hdrHolWkd:  '7C1C1C',
+      cellO:      'FFD9A8', cellC:       'BCD4FF',
+      cellOff:    'E2E2E2', cellFixed:   'EFF6FF',
+      weekTitle:  'FEF9C3', titleBg:     'F0F9FF',
+      empName:    'F1F5F9', white:        'FFFFFF',
+      borderGray: 'CBD5E1', borderFixed:  '3B82F6',
+      textDark:   '0F172A', textLight:    'FFFFFF',
     };
 
-    const thin  = (color) => ({ style: 'thin',   color: { rgb: color } });
-    const allBorder = (color) => ({ top: thin(color), bottom: thin(color), left: thin(color), right: thin(color) });
-
-    // 기본 셀 스타일 팩토리
-    function sBase(fgColor, bold, fontColor, borderColor) {
-      return {
-        fill   : { patternType: 'solid', fgColor: { rgb: fgColor } },
-        font   : { bold: !!bold, color: { rgb: fontColor || C.textDark }, name: '맑은 고딕', sz: 10 },
-        alignment: { horizontal: 'center', vertical: 'center', wrapText: false },
-        border : allBorder(borderColor || C.border),
-      };
+    function mkBorder(hex, style) {
+      const b = { style: style || 'thin', color: { argb: A(hex) } };
+      return { top: b, bottom: b, left: b, right: b };
     }
 
-    // 셀 라벨 생성: 값 + 고정여부 + 공휴일여부 반영
     function cellLabel(v, isFixed, isHol) {
       if (v === 'O')   return isFixed ? 'O (고정)' : 'O';
       if (v === 'C')   return isFixed ? 'C (고정)' : 'C';
@@ -239,112 +230,89 @@
       return v || '';
     }
 
-    // 셀 배경색: 고정이면 고정 색, 아니면 값 색
-    function cellFill(v, isFixed) {
-      if (isFixed) return C.cellFixed;
-      if (v === 'O')   return C.cellO;
-      if (v === 'C')   return C.cellC;
-      if (v === 'OFF') return C.cellOff;
-      return C.white;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = '카페 근무표 자동생성기 v2';
+    const ws = wb.addWorksheet(`사이클${cycleIndex + 1}`);
+
+    ws.columns = [{ width: 10 }].concat(Array(7).fill({ width: 13 }));
+
+    // 셀 스타일 적용 헬퍼
+    function sc(cell, value, opts) {
+      cell.value = value;
+      if (opts.bg) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: A(opts.bg) } };
+      }
+      cell.font = {
+        name: '맑은 고딕', size: opts.size || 10,
+        bold: !!opts.bold,
+        color: { argb: A(opts.fg || C.textDark) },
+      };
+      cell.alignment = {
+        horizontal: opts.h || 'center', vertical: 'middle',
+        wrapText: !!opts.wrap,
+      };
+      if (opts.border !== false) {
+        cell.border = mkBorder(opts.fixedB ? C.borderFixed : C.borderGray, opts.fixedB ? 'medium' : 'thin');
+      }
     }
 
-    // ── 시트 데이터 구성 ──
-    const wb  = XLSX.utils.book_new();
-    const ws  = {};
-    const merges = [];
-    let rowIdx = 0;
-
-    function setCell(r, c, v, s) {
-      const addr = XLSX.utils.encode_cell({ r, c });
-      ws[addr] = { v, t: typeof v === 'number' ? 'n' : 's', s };
-    }
+    let r = 1;
 
     // ── 타이틀 행 ──
-    const firstDay = days[0], lastDay = days[27];
-    const titleText = `사이클 #${cycleIndex + 1}  (${firstDay.iso} ~ ${lastDay.iso})`;
-    setCell(rowIdx, 0, titleText, {
-      fill: { patternType: 'solid', fgColor: { rgb: C.titleBg } },
-      font: { bold: true, sz: 12, color: { rgb: C.textDark }, name: '맑은 고딕' },
-      alignment: { horizontal: 'left', vertical: 'center' },
+    ws.mergeCells(r, 1, r, 8);
+    sc(ws.getCell(r, 1), `사이클 #${cycleIndex + 1}  (${days[0].iso} ~ ${days[27].iso})`, {
+      bg: C.titleBg, size: 12, bold: true, h: 'left', border: false,
     });
-    merges.push({ s: { r: rowIdx, c: 0 }, e: { r: rowIdx, c: 7 } });
-    rowIdx++;
-    rowIdx++; // 빈 행
+    ws.getRow(r).height = 22;
+    r++;
+    ws.getRow(r).height = 6; r++; // 빈 행
 
     weeksToExport.forEach(w => {
       const weekDays = days.slice(w * 7, w * 7 + 7);
 
       // ── 주차 제목 행 ──
-      setCell(rowIdx, 0, `${w + 1}주차`, {
-        fill: { patternType: 'solid', fgColor: { rgb: C.weekTitle } },
-        font: { bold: true, sz: 11, color: { rgb: C.textDark }, name: '맑은 고딕' },
-        alignment: { horizontal: 'left', vertical: 'center' },
-        border: allBorder(C.border),
-      });
-      for (let c = 1; c <= 7; c++) {
-        setCell(rowIdx, c, '', {
-          fill: { patternType: 'solid', fgColor: { rgb: C.weekTitle } },
-          border: allBorder(C.border),
-        });
-      }
-      merges.push({ s: { r: rowIdx, c: 0 }, e: { r: rowIdx, c: 7 } });
-      rowIdx++;
+      ws.mergeCells(r, 1, r, 8);
+      sc(ws.getCell(r, 1), `${w + 1}주차`, { bg: C.weekTitle, size: 11, bold: true, h: 'left', border: false });
+      ws.getRow(r).height = 20; r++;
 
       // ── 날짜 헤더 행 ──
-      setCell(rowIdx, 0, '직원', sBase(C.hdrDefault, true, C.textLight));
-
+      sc(ws.getCell(r, 1), '직원', { bg: C.hdrDefault, bold: true, fg: C.textLight });
       weekDays.forEach((d, i) => {
         const isHol = holidayIsoSet && holidayIsoSet.has(d.iso);
         const isWkd = d.weekday === 0 || d.weekday === 6;
-        const bgHex = isHol && isWkd ? C.hdrHolWkd
+        const bg    = isHol && isWkd ? C.hdrHolWkd
                     : isHol          ? C.hdrHoliday
-                    : isWkd          ? C.hdrWeekend
-                    :                  C.hdrDefault;
+                    : isWkd          ? C.hdrWeekend : C.hdrDefault;
         const holName = isHol ? (holidayMap[d.iso] || '공휴일') : '';
-        const label = holName
+        const label   = holName
           ? `${WEEKDAY_LABELS[d.weekday]} ${d.date.getUTCMonth() + 1}/${d.date.getUTCDate()}\n(${holName})`
           : `${WEEKDAY_LABELS[d.weekday]} ${d.date.getUTCMonth() + 1}/${d.date.getUTCDate()}`;
-        setCell(rowIdx, i + 1, label, {
-          ...sBase(bgHex, true, C.textLight),
-          alignment: { horizontal: 'center', vertical: 'center', wrapText: !!holName },
-        });
+        sc(ws.getCell(r, i + 2), label, { bg, bold: true, fg: C.textLight, wrap: !!holName });
       });
-      rowIdx++;
+      ws.getRow(r).height = 22; r++;
 
       // ── 직원 행 ──
       employees.forEach((name, e) => {
-        setCell(rowIdx, 0, name, {
-          ...sBase(C.empName, true, C.textDark),
-          alignment: { horizontal: 'center', vertical: 'center' },
-        });
-
+        sc(ws.getCell(r, 1), name, { bg: C.empName, bold: true });
         weekDays.forEach((d, i) => {
-          const v      = d.assignments[e];
-          const isHol  = holidayIsoSet && holidayIsoSet.has(d.iso);
+          const v       = d.assignments[e];
+          const isHol   = holidayIsoSet && holidayIsoSet.has(d.iso);
           const isFixed = !!(fixedAssignments[d.iso] && fixedAssignments[d.iso][e]);
-          const label  = cellLabel(v, isFixed, isHol);
-          const fill   = cellFill(v, isFixed);
-          const bdrColor = isFixed ? C.borderFixed : C.border;
-          setCell(rowIdx, i + 1, label, {
-            ...sBase(fill, isFixed, C.textDark, bdrColor),
-          });
+          const label   = cellLabel(v, isFixed, isHol);
+          const bg      = isFixed   ? C.cellFixed
+                        : v === 'O'   ? C.cellO
+                        : v === 'C'   ? C.cellC
+                        : v === 'OFF' ? C.cellOff : C.white;
+          sc(ws.getCell(r, i + 2), label, { bg, bold: isFixed, fixedB: isFixed });
         });
-        rowIdx++;
+        ws.getRow(r).height = 18; r++;
       });
 
-      rowIdx++; // 주차 간 빈 행
+      ws.getRow(r).height = 6; r++; // 주차 간 빈 행
     });
 
-    // 시트 범위 설정
-    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rowIdx, c: 7 } });
-    ws['!cols'] = [{ wch: 10 }].concat(Array(7).fill({ wch: 14 }));
-    ws['!rows'] = [];
-    // 공휴일이 있는 헤더 행은 높이를 높여 줄바꿈 표시
-    for (let r = 0; r < rowIdx; r++) ws['!rows'][r] = { hpt: 20 };
-    ws['!merges'] = merges;
-
-    XLSX.utils.book_append_sheet(wb, ws, `사이클${cycleIndex + 1}`);
-    return wb;
+    const buffer = await wb.xlsx.writeBuffer();
+    return buffer;
   }
 
   root.ExportUtil = { buildScheduleCanvas, buildCSV, buildXLSX };
