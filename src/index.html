@@ -147,6 +147,25 @@
       </div>
     </div>
 
+    <!-- 8. 데이터 파일 저장 -->
+    <div class="sc-card" id="fileStorageCard">
+      <div class="accordion-header" data-target="fileStorageBody">
+        <span class="sc-icon">💾</span>
+        <span class="sc-title">데이터 파일 저장</span>
+        <span id="fileStatusBadge" class="file-badge file-badge--off">미연결</span>
+        <span class="acc-arrow">▶</span>
+      </div>
+      <div class="accordion-body" id="fileStorageBody" style="display:none">
+        <div id="fileStatusArea" class="file-status-area"></div>
+        <div class="file-btn-row">
+          <button id="connectFileBtn"  class="btn btn-sm">📂 파일 연결</button>
+          <button id="createFileBtn"   class="btn btn-sm">✨ 새 파일 만들기</button>
+          <button id="disconnectFileBtn" class="btn btn-sm btn-danger" style="display:none">🔌 연결 해제</button>
+        </div>
+        <p class="sc-hint">연결하면 수정할 때마다 해당 파일에 자동 저장됩니다.<br>폴더째 공유하면 데이터도 함께 전달됩니다.</p>
+      </div>
+    </div>
+
   </div><!-- sidebar-inner -->
   </aside>
 

@@ -424,9 +424,24 @@ body {
   transition: background 0.12s;
 }
 .btn:hover { background: var(--surface-h); }
-.btn-sm   { padding: 4px 9px; font-size: 11.5px; }
-.btn-add  { background: var(--primary-light); border-color: #bfdbfe; color: var(--primary); font-weight: 600; }
+.btn-sm      { padding: 4px 9px; font-size: 11.5px; }
+.btn-add     { background: var(--primary-light); border-color: #bfdbfe; color: var(--primary); font-weight: 600; }
 .btn-add:hover { background: #dbeafe; }
+.btn-danger  { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+.btn-danger:hover { background: #fecaca; }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+.btn-primary:hover { background: #1d4ed8; }
+
+/* 파일 저장 상태 */
+.file-badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 10px; margin-left: 4px; }
+.file-badge--on      { background: #dcfce7; color: #15803d; }
+.file-badge--off     { background: #f1f5f9; color: #64748b; }
+.file-badge--pending { background: #fef9c3; color: #92400e; }
+.file-btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.file-status-area { margin-bottom: 10px; font-size: 12px; line-height: 1.5; }
+.file-status-ok   { color: #15803d; background: #f0fdf4; border-radius: 6px; padding: 6px 10px; }
+.file-status-warn { color: #92400e; background: #fef9c3; border-radius: 6px; padding: 6px 10px; }
+.file-status-off  { color: #64748b; background: #f8fafc; border-radius: 6px; padding: 6px 10px; }
 
 /* ── 오른쪽 콘텐츠 ── */
 .content-panel {

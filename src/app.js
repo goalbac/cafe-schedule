@@ -49,6 +49,11 @@
   const addLeaveBtn       = $('addLeaveBtn');
   const leaveListEl       = $('leaveList');
   const requestBadge      = $('requestBadge');
+  const connectFileBtn    = $('connectFileBtn');
+  const createFileBtn     = $('createFileBtn');
+  const disconnectFileBtn = $('disconnectFileBtn');
+  const fileStatusBadge   = $('fileStatusBadge');
+  const fileStatusArea    = $('fileStatusArea');
 
   // ── 설정 접근자 ───────────────────────────────────────────────────────────
   function getCfg() {
@@ -83,7 +88,75 @@
   }
 
   // ── 초기화 ────────────────────────────────────────────────────────────────
+  // ── 파일 저장 UI ──────────────────────────────────────────────────────────
+  function renderFileStatus() {
+    const name = Storage.getFileName();
+    const pending = Storage.getPendingHandle();
+    if (name) {
+      fileStatusBadge.textContent = '연결됨';
+      fileStatusBadge.className   = 'file-badge file-badge--on';
+      fileStatusArea.innerHTML    = `<p class="file-status-ok">📁 <b>${name}</b> 에 자동 저장 중</p>`;
+      connectFileBtn.style.display    = '';
+      createFileBtn.style.display     = '';
+      disconnectFileBtn.style.display = '';
+    } else if (pending) {
+      fileStatusBadge.textContent = '복원 필요';
+      fileStatusBadge.className   = 'file-badge file-badge--pending';
+      fileStatusArea.innerHTML    = `<p class="file-status-warn">이전에 연결한 파일이 있습니다.<br>아래 버튼을 눌러 연결을 복원하세요.</p>
+        <button id="restoreFileBtn" class="btn btn-sm btn-primary">🔄 연결 복원</button>`;
+      connectFileBtn.style.display    = '';
+      createFileBtn.style.display     = '';
+      disconnectFileBtn.style.display = '';
+      document.getElementById('restoreFileBtn').addEventListener('click', async () => {
+        const ok = await Storage.requestPendingPermission();
+        if (ok) {
+          // 파일에서 데이터 다시 로드
+          const fileData = await Storage.loadAll();
+          if (fileData && fileData.cycles) {
+            storageData = fileData;
+            await Storage.saveAll(storageData);
+          }
+        }
+        renderFileStatus();
+      });
+    } else {
+      fileStatusBadge.textContent = '미연결';
+      fileStatusBadge.className   = 'file-badge file-badge--off';
+      fileStatusArea.innerHTML    = `<p class="file-status-off">현재 브라우저(로컬스토리지)에 저장 중입니다.<br>파일에 연결하면 폴더 공유 시 데이터도 함께 전달됩니다.</p>`;
+      connectFileBtn.style.display    = '';
+      createFileBtn.style.display     = '';
+      disconnectFileBtn.style.display = 'none';
+    }
+  }
+
+  async function onConnectFile() {
+    const ok = await Storage.connectFile();
+    if (!ok) return;
+    // 연결 후 현재 데이터를 파일에 저장
+    await Storage.saveAll(storageData);
+    renderFileStatus();
+    setStatus(`파일 연결됨: ${Storage.getFileName()}`);
+  }
+
+  async function onCreateFile() {
+    const ok = await Storage.createAndConnectFile();
+    if (!ok) return;
+    await Storage.saveAll(storageData);
+    renderFileStatus();
+    setStatus(`파일 생성 및 연결됨: ${Storage.getFileName()}`);
+  }
+
+  async function onDisconnectFile() {
+    if (!confirm('파일 연결을 해제하시겠습니까?\n데이터는 브라우저(로컬스토리지)에 계속 저장됩니다.')) return;
+    await Storage.disconnectFile();
+    renderFileStatus();
+    setStatus('파일 연결 해제됨. 브라우저 저장으로 전환됩니다.');
+  }
+
+  // ── 앱 초기화 ─────────────────────────────────────────────────────────────
   async function init() {
+    // 파일 핸들 복원 시도 (사용자 제스처 없이 가능한 경우만)
+    await Storage.tryRestoreFileHandle();
     storageData = await Storage.loadAll();
     empInputs.forEach((el, i) => { el.value = storageData.employees[i] || ''; });
 
@@ -113,6 +186,18 @@
     } else {
       setStatus('사이클을 선택하고 "이 사이클 일정 생성"을 눌러 시작하세요.');
       renderConditionPanel();
+    }
+
+    renderFileStatus();
+
+    // 파일 저장 버튼 이벤트
+    connectFileBtn.addEventListener('click',    onConnectFile);
+    createFileBtn.addEventListener('click',     onCreateFile);
+    disconnectFileBtn.addEventListener('click', onDisconnectFile);
+
+    // FSA 미지원 브라우저면 카드 숨김
+    if (!Storage.fsaSupported()) {
+      $('fileStorageCard').style.display = 'none';
     }
   }
 
