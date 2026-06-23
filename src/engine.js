@@ -231,20 +231,38 @@
   }
 
   // ── SA 소프트 비용 (고정 슬롯 제외) ──────────────────────────────────────
-  function softCost(opener, offp, fixedSlots) {
+  function softCost(opener, offp, fixedSlots, calDays, cfg) {
     let s = 0;
+    const hClosers  = (cfg && cfg.holidayCloserEmployees) || [];
+    const holSet    = (cfg && cfg._holidaySet) || new Set();
+
     for (let d = 0; d < opener.length - 1; d++) {
       // 고정 오픈 슬롯은 변경 불가 → 소프트 위반 계산 제외
       const nextFixed = fixedSlots && fixedSlots[d + 1] && fixedSlots[d + 1].offp !== null;
       if (!nextFixed && offp[d + 1] !== opener[d]) s++;
       if (d % 7 === 6 && opener[d] !== opener[d + 1]) s++;
     }
+
+    // 주말·공휴일 마감 선호 직원이 C가 아닐 때 페널티
+    if (hClosers.length > 0 && calDays) {
+      for (let d = 0; d < calDays.length; d++) {
+        const wd = calDays[d].weekday;
+        const isWkdOrHol = wd === 0 || wd === 6 || holSet.has(calDays[d].iso);
+        if (!isWkdOrHol) continue;
+        // 선호 직원 중 누군가가 C(마감)이면 OK
+        const anyCloser = hClosers.some(e => e !== opener[d] && e !== offp[d]);
+        if (!anyCloser) s += 2;
+      }
+    }
+
     return s;
   }
 
   // ── 메인 생성 함수 ─────────────────────────────────────────────────────────
   function generateSchedule(cycleStartIso, cfg, fixedAssignments, seed) {
     cfg = Object.assign(defaultRuleConfig(), cfg || {});
+    // 공휴일 Set을 softCost에서 참조할 수 있도록 cfg에 주입
+    cfg._holidaySet = new Set((cfg.holidays || []).map(h => h.iso || h));
     const calDays   = buildCycleDays(cycleStartIso);
     const fixedSlots = buildFixedSlotsArray(calDays, fixedAssignments || {}, cfg);
     const rng        = mulberry32(seed == null ? Date.now() % 2147483647 : seed);
@@ -257,7 +275,7 @@
     const RESTARTS = 25, ITERS = 6000;
 
     const totalCost = (opener, offp) =>
-      hardCost(opener, offp, cfg) + fixedCost(opener, offp, fixedSlots) + softCost(opener, offp, fixedSlots);
+      hardCost(opener, offp, cfg) + fixedCost(opener, offp, fixedSlots) + softCost(opener, offp, fixedSlots, calDays, cfg);
 
     for (let r = 0; r < RESTARTS; r++) {
       // 각 주별 자유 할당량으로 페어 생성
@@ -594,11 +612,11 @@
     const hClosers = cfg.holidayCloserEmployees || [];
     if (hClosers.length > 0) {
       days.forEach(d => {
-        if (holidaySet.has(d.iso)) {
-          holidayCloserTotal++;
-          const anyCloser = hClosers.some(e => d.assignments[e] === 'C');
-          if (!anyCloser) holidayCloserViolations++;
-        }
+        const isWkdOrHol = d.weekday === 0 || d.weekday === 6 || holidaySet.has(d.iso);
+        if (!isWkdOrHol) return;
+        holidayCloserTotal++;
+        const anyCloser = hClosers.some(e => d.assignments[e] === 'C');
+        if (!anyCloser) holidayCloserViolations++;
       });
     }
 

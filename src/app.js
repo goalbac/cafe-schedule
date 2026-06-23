@@ -183,7 +183,7 @@
     generateBtn.disabled = true;
     await new Promise(r => setTimeout(r, 30));
 
-    const result = SchedulerEngine.generateSchedule(currentCycleStart, cfg, storageData.fixedAssignments, Date.now());
+    const result = SchedulerEngine.generateSchedule(currentCycleStart, Object.assign({}, cfg, { holidays: getHolidays() }), storageData.fixedAssignments, Date.now());
     SchedulerEngine.applyFixedAssignments(result.days, storageData.fixedAssignments, cfg);
     result.report = SchedulerEngine.validateSchedule(result.days, cfg, storageData.fixedAssignments, getHolidays());
 
