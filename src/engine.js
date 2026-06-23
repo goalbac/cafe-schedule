@@ -534,6 +534,22 @@
       const lightOffWeek  = weeklyOffs.indexOf(Math.min(...weeklyOffs));
       const separateWeeksOk = weeklyOpenDistOk && weeklyOffDistOk && lightOpenWeek !== lightOffWeek;
 
+      // 고정 배정으로 인한 주별 분포 위반 여부 판단
+      const fixedWeeklyOpens = [0,0,0,0], fixedWeeklyOffs = [0,0,0,0];
+      for (let d = 0; d < D; d++) {
+        const w = Math.floor(d / 7);
+        const f = fixedAssignments[days[d].iso];
+        if (f && f[e] != null) {
+          const t = f[e].type;
+          if (t === 'O') fixedWeeklyOpens[w]++;
+          if (t === 'OFF' || t === 'HOLIDAY_OFF') fixedWeeklyOffs[w]++;
+        }
+      }
+      const weeklyOpenDistFixedCause = !weeklyOpenDistOk && weeklyOpens.some((cnt, w) =>
+        cnt !== targetOpenForWeek(e, w, cfg) && fixedWeeklyOpens[w] > 0);
+      const weeklyOffDistFixedCause = !weeklyOffDistOk && weeklyOffs.some((cnt, w) =>
+        cnt !== targetOffForWeek(e, w, cfg) && fixedWeeklyOffs[w] > 0);
+
       const closesTarget = cfg.cycleWeeks * 7 - cfg.opensPerCycle - cfg.offsPerCycle;
       perEmployee.push({
         employeeIndex: e,
@@ -548,6 +564,7 @@
         twoConsecCount, twoConsecOk: !cfg.requireOneTwoConsecutiveOff || twoConsecCount >= 1,
         weeklyOpens, weeklyOffs,
         weeklyOpenDistOk, weeklyOffDistOk,
+        weeklyOpenDistFixedCause, weeklyOffDistFixedCause,
         lightOpenWeek, lightOffWeek, separateWeeksOk,
       });
     }

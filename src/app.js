@@ -470,11 +470,21 @@
         <td colspan="${names.length}" class="ct-global">${ok ? '✅' : '❌'}${note ? ' ' + note : ''}</td>
       </tr>`;
 
-    const empRow = (name, cfgVal, vals, okFn) => {
-      const allOk = vals.every((v, i) => okFn(v, pe[i]));
-      return `<tr class="${allOk ? 'ct-ok' : 'ct-bad'}">
+    // warnFn(val, pe) → true이면 ⚠ 경고(고정 배정으로 인한 불가피 위반)
+    const empRow = (name, cfgVal, vals, okFn, warnFn) => {
+      const cells = vals.map((v, i) => {
+        const ok   = okFn(v, pe[i]);
+        const warn = !ok && warnFn && warnFn(v, pe[i]);
+        const cls  = ok ? 'ct-ok' : warn ? 'ct-warn' : 'ct-bad';
+        const icon = ok ? '✅' : warn ? '⚠' : '❌';
+        return `<td class="ct-emp ${cls}">${v} ${icon}</td>`;
+      });
+      const allOk  = vals.every((v, i) => okFn(v, pe[i]));
+      const anyWarn = !allOk && warnFn && vals.some((v, i) => !okFn(v, pe[i]) && warnFn(v, pe[i]));
+      const rowCls  = allOk ? 'ct-ok' : anyWarn ? 'ct-warn' : 'ct-bad';
+      return `<tr class="${rowCls}">
         <td class="ct-name">${name}</td><td class="ct-cfg">${cfgVal}</td>
-        ${vals.map((v, i) => { const ok = okFn(v, pe[i]); return `<td class="ct-emp ${ok ? 'ct-ok' : 'ct-bad'}">${v} ${ok ? '✅' : '❌'}</td>`; }).join('')}
+        ${cells.join('')}
       </tr>`;
     };
 
@@ -483,7 +493,8 @@
     tbl += empRow('오픈 횟수',  `${cfg.opensPerCycle}회`, pe.map(p => `${p.opens}/${p.opensTarget}`),   (_, p) => p.opens  === p.opensTarget);
     tbl += empRow('마감 횟수',  `${cT}회`,               pe.map(p => `${p.closes}/${p.closesTarget}`), (_, p) => p.closes === p.closesTarget);
     tbl += empRow('휴무 일수',  `${cfg.offsPerCycle}일`, pe.map(p => `${p.offs}/${p.offsTarget}`),     (_, p) => p.offs   === p.offsTarget);
-    tbl += empRow('주별 오픈 분포', '3주×2+1주×1',       pe.map(p => `[${p.weeklyOpens.join(',')}]`),  (_, p) => p.weeklyOpenDistOk);
+    tbl += empRow('주별 오픈 분포', '3주×2+1주×1',       pe.map(p => `[${p.weeklyOpens.join(',')}]`),  (_, p) => p.weeklyOpenDistOk, (_, p) => p.weeklyOpenDistFixedCause);
+    tbl += empRow('주별 휴무 분포', '3주×2+1주×1',       pe.map(p => `[${p.weeklyOffs.join(',')}]`),   (_, p) => p.weeklyOffDistOk,  (_, p) => p.weeklyOffDistFixedCause);
     tbl += empRow('오픈≠휴무 주', '다른 주',             pe.map(p => `O:${p.lightOpenWeek+1}주 H:${p.lightOffWeek+1}주`), (_, p) => p.separateWeeksOk);
     tbl += empRow('주말 오픈', `${cfg.weekendOpensPerCycle}회`, pe.map(p => `${p.weekendOpen}/${p.weekendOpenTarget}`), (_, p) => p.weekendOpen === p.weekendOpenTarget);
     tbl += empRow('주말 휴무', `${cfg.weekendOffsPerCycle}일`,  pe.map(p => `${p.weekendOff}/${p.weekendOffTarget}`),   (_, p) => p.weekendOff  === p.weekendOffTarget);
@@ -494,7 +505,10 @@
     const hardAllOk = dayOk && pe.every(p =>
       p.opens === p.opensTarget && p.offs === p.offsTarget && p.closes === p.closesTarget &&
       p.weekendOpen === p.weekendOpenTarget && p.weekendOff === p.weekendOffTarget &&
-      p.maxStreakOk && p.twoConsecOk && p.weeklyOpenDistOk && p.separateWeeksOk);
+      p.maxStreakOk && p.twoConsecOk &&
+      (p.weeklyOpenDistOk || p.weeklyOpenDistFixedCause) &&
+      (p.weeklyOffDistOk  || p.weeklyOffDistFixedCause) &&
+      p.separateWeeksOk);
 
     hardConditionsEl.innerHTML = overrideNote + tbl;
     hardOverallEl.textContent  = hardAllOk ? '✅' : '❌';

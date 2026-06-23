@@ -388,8 +388,9 @@ body {
 .cond-table tr.ct-ok  td { background: var(--ok-bg); }
 .cond-table tr.ct-bad td { background: var(--bad-bg); }
 .cond-table tr.ct-warn td { background: var(--warn-bg); }
-.cond-table td.ct-ok  { background: var(--ok-cell) !important; }
-.cond-table td.ct-bad { background: var(--bad-cell) !important; font-weight: 700; color: #b91c1c; }
+.cond-table td.ct-ok   { background: var(--ok-cell) !important; }
+.cond-table td.ct-bad  { background: var(--bad-cell) !important; font-weight: 700; color: #b91c1c; }
+.cond-table td.ct-warn { background: #fef9c3 !important; color: #92400e; font-weight: 600; }
 
 /* ── 공휴일 관리 ── */
 .holiday-add-row {
