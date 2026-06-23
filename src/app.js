@@ -573,7 +573,7 @@
 
   async function onExportXLSX() {
     if (!cycleData) { alert('먼저 일정을 생성하세요.'); return; }
-    const wb = ExportUtil.buildXLSX(cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks, getHolidaySet(), getHolidayMap());
+    const wb = ExportUtil.buildXLSX(cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks, getHolidaySet(), getHolidayMap(), storageData.fixedAssignments);
     if (!wb) return;
     XLSX.writeFile(wb, `근무표_사이클${cycleIndex+1}_${cycleData.cycleStartIso}.xlsx`);
   }
