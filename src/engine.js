@@ -313,9 +313,60 @@
 
     // 고정 배정 후처리 (SA 수렴 실패분 보정)
     const overrideViolations = applyFixedAssignments(days, fixedAssignments || {}, cfg);
+    // 사이클 총량 균형 보정 (고정 배정으로 인한 카운트 불균형 해소)
+    balanceCycleCounts(days, fixedAssignments || {}, cfg);
     const report = validateSchedule(days, cfg, fixedAssignments || {});
     report.overrideViolations = overrideViolations;
     return { cycleStartIso, cfg, days, report };
+  }
+
+  // ── 사이클 총량 균형 보정 ──────────────────────────────────────────────────
+  // applyFixedAssignments 후 직원별 O/OFF/C 횟수가 목표(7/7/14)와 다를 경우
+  // 같은 날 두 직원 간 같은-구성 스왑(OFF↔C, O↔C)으로 보정한다.
+  // 스왑 조건: 양쪽 모두 고정 배정이 아닌 날만 허용 → 일별 구성 자동 유지.
+  function balanceCycleCounts(days, fixedAssignments, cfg) {
+    const N = cfg.numEmployees;
+    const TARGET = { O: 7, OFF: 7 };
+
+    function counts(type) {
+      return Array.from({ length: N }, (_, e) =>
+        days.reduce((s, d) => s + (d.assignments[e] === type ? 1 : 0), 0));
+    }
+
+    function isFixed(dayIso, e) {
+      const f = fixedAssignments[dayIso];
+      return f && f[e] != null;
+    }
+
+    // type='OFF' 또는 'O': over인 직원의 해당 타입 → C, under인 직원의 C → 해당 타입
+    function balanceType(type) {
+      for (let iter = 0; iter < 200; iter++) {
+        const cnts = counts(type);
+        const maxV = Math.max(...cnts), minV = Math.min(...cnts);
+        if (maxV <= TARGET[type] && minV >= TARGET[type]) break;
+        // over/under 직원 선택 (목표 초과/미달 중 가장 심한 것)
+        const overE  = cnts.indexOf(maxV);
+        const underE = cnts.indexOf(minV);
+        if (overE === underE || maxV === minV) break;
+
+        let swapped = false;
+        for (let d = 0; d < days.length; d++) {
+          const a   = days[d].assignments;
+          const iso = days[d].iso;
+          if (a[overE] === type && a[underE] === 'C'
+              && !isFixed(iso, overE) && !isFixed(iso, underE)) {
+            a[overE]  = 'C';
+            a[underE] = type;
+            swapped = true;
+            break;
+          }
+        }
+        if (!swapped) break;
+      }
+    }
+
+    balanceType('OFF');
+    balanceType('O');
   }
 
   // ── 고정 배정 후처리 ────────────────────────────────────────────────────────
