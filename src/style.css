@@ -450,7 +450,9 @@ body {
   flex-shrink: 0;
 }
 .cell-hint { font-size: 12px; color: var(--text-2); }
-.export-buttons { display: flex; gap: 6px; }
+.export-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-data { background: #f0fdf4; border-color: #86efac; color: #166534; }
+.btn-data:hover { background: #dcfce7; }
 
 /* ── 주차 블록 ── */
 .week-block {

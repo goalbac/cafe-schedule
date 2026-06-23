@@ -39,6 +39,10 @@
   const addHolidayBtn     = $('addHolidayBtn');
   const exportImageBtn    = $('exportImageBtn');
   const exportCsvBtn      = $('exportCsvBtn');
+  const exportXlsxBtn     = $('exportXlsxBtn');
+  const exportJsonBtn     = $('exportJsonBtn');
+  const importJsonBtn     = $('importJsonBtn');
+  const importJsonFile    = $('importJsonFile');
   const leaveEmpSelect    = $('leaveEmpSelect');
   const leaveDateInput    = $('leaveDateInput');
   const leaveTypeSelect   = $('leaveTypeSelect');
@@ -161,6 +165,17 @@
   async function doGenerate() {
     if (!currentCycleStart) { alert('사이클 날짜를 먼저 설정하세요.'); return; }
     const cfg = getCfg();
+
+    // 고정 배정 사전 검증
+    const warnings = SchedulerEngine.validateFixedRequests(
+      storageData.fixedAssignments, cfg, currentCycleStart);
+    if (warnings.length > 0) {
+      const msg = warnings.map(w => `• ${w.msg}`).join('\n');
+      const proceed = confirm(
+        `⚠️ 고정 배정 경고 (${warnings.length}건)\n\n${msg}\n\n그래도 생성하시겠습니까?`);
+      if (!proceed) return;
+    }
+
     if (storageData.cycles[currentCycleStart]) {
       if (!confirm(`사이클 #${cycleIndex + 1}이 이미 생성되어 있습니다.\n고정 배정을 유지하고 재생성할까요?`)) return;
     }
@@ -543,7 +558,9 @@
   // ── 내보내기 ──────────────────────────────────────────────────────────────
   async function onExportImage() {
     if (!cycleData) { alert('먼저 일정을 생성하세요.'); return; }
-    const canvas = ExportUtil.buildScheduleCanvas(cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks, getHolidaySet(), storageData.fixedAssignments);
+    const canvas = ExportUtil.buildScheduleCanvas(
+      cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks,
+      getHolidaySet(), storageData.fixedAssignments, getHolidayMap());
     if (!canvas) { alert('내보낼 주를 하나 이상 선택하세요.'); return; }
     await Storage.exportImage(canvas.toDataURL('image/png'), `근무표_사이클${cycleIndex+1}_${cycleData.cycleStartIso}.png`);
   }
@@ -552,6 +569,59 @@
     if (!cycleData) { alert('먼저 일정을 생성하세요.'); return; }
     const csv = ExportUtil.buildCSV(cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks, getHolidaySet());
     await Storage.exportCSV(csv, `근무표_사이클${cycleIndex+1}_${cycleData.cycleStartIso}.csv`);
+  }
+
+  async function onExportXLSX() {
+    if (!cycleData) { alert('먼저 일정을 생성하세요.'); return; }
+    const wb = ExportUtil.buildXLSX(cycleData, currentEmployeeNames(), cycleIndex, selectedWeeks, getHolidaySet(), getHolidayMap());
+    if (!wb) return;
+    XLSX.writeFile(wb, `근무표_사이클${cycleIndex+1}_${cycleData.cycleStartIso}.xlsx`);
+  }
+
+  // ── JSON 내보내기/가져오기 ────────────────────────────────────────────────
+  function onExportJSON() {
+    const json = JSON.stringify(storageData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `cafe-scheduler-data-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus('데이터 저장 완료');
+  }
+
+  function onImportJSON() { importJsonFile.click(); }
+
+  function onImportFileSelected(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.cycles || !data.fixedAssignments) throw new Error('유효하지 않은 파일');
+        storageData = data;
+        await Storage.saveAll(storageData);
+        // 화면 재초기화
+        empInputs.forEach((el, i) => { el.value = storageData.employees[i] || ''; });
+        const cfg = getCfg();
+        cycleIndex = storageData.lastCycleStart
+          ? SchedulerEngine.getCycleIndex(cfg.epoch, storageData.lastCycleStart)
+          : SchedulerEngine.getCurrentCycleIndex(cfg.epoch);
+        currentCycleStart = storageData.lastCycleStart || SchedulerEngine.getCycleStart(cfg.epoch, cycleIndex);
+        updateCycleUI();
+        renderHolidayList();
+        renderLeaveRequests();
+        const saved = storageData.cycles[currentCycleStart];
+        if (saved) loadCycleFromStorage(currentCycleStart);
+        else { cycleData = null; scheduleContainer.innerHTML = ''; renderConditionPanel(); }
+        setStatus('데이터 불러오기 완료');
+      } catch (err) {
+        alert(`불러오기 실패: ${err.message}`);
+      }
+      importJsonFile.value = '';
+    };
+    reader.readAsText(file);
   }
 
   // ── Epoch 변경 ────────────────────────────────────────────────────────────
@@ -609,8 +679,12 @@
   todayCycleBtn.addEventListener('click',  navigateToToday);
   generateBtn.addEventListener('click',    doGenerate);
   epochInput.addEventListener('change',    onEpochChange);
-  exportImageBtn.addEventListener('click', onExportImage);
-  exportCsvBtn.addEventListener('click',   onExportCSV);
+  exportImageBtn.addEventListener('click',  onExportImage);
+  exportCsvBtn.addEventListener('click',    onExportCSV);
+  exportXlsxBtn.addEventListener('click',   onExportXLSX);
+  exportJsonBtn.addEventListener('click',   onExportJSON);
+  importJsonBtn.addEventListener('click',   onImportJSON);
+  importJsonFile.addEventListener('change', onImportFileSelected);
   addHolidayBtn.addEventListener('click',  addHoliday);
   addLeaveBtn.addEventListener('click',    addLeaveRequest);
 

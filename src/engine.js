@@ -1,6 +1,6 @@
 /**
  * engine.js  ―  카페 근무표 자동생성 엔진 v2
- * 4주(28일) 사이클 기반. 고정배정 후처리 오버라이드 포함.
+ * 4주(28일) 사이클 기반. 고정 배정 인식 SA 포함.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -10,7 +10,7 @@
 
   const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
-  // ── 기본 설정 (config.js DEFAULT_CONFIG 와 동일 구조) ──────────────────
+  // ── 기본 설정 ──────────────────────────────────────────────────────────────
   function defaultRuleConfig() {
     return {
       epoch: '2025-01-05',
@@ -26,7 +26,7 @@
     };
   }
 
-  // ── 날짜 유틸 ──────────────────────────────────────────────────────────
+  // ── 날짜 유틸 ──────────────────────────────────────────────────────────────
   function pad2(n) { return String(n).padStart(2, '0'); }
   function toDateUTC(iso) {
     const [y, m, d] = iso.split('-').map(Number);
@@ -41,7 +41,7 @@
     return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
   }
 
-  // ── 사이클 인덱스 ──────────────────────────────────────────────────────
+  // ── 사이클 인덱스 ──────────────────────────────────────────────────────────
   function getCycleIndex(epochIso, targetIso) {
     const diff = Math.round((toDateUTC(targetIso) - toDateUTC(epochIso)) / 86400000);
     return Math.floor(diff / 28);
@@ -53,7 +53,7 @@
     return getCycleIndex(epochIso, fmtDate(new Date()));
   }
 
-  // ── 사이클 28일 배열 ────────────────────────────────────────────────────
+  // ── 사이클 28일 배열 ────────────────────────────────────────────────────────
   function buildCycleDays(cycleStartIso) {
     const start = toDateUTC(cycleStartIso);
     return Array.from({ length: 28 }, (_, i) => {
@@ -62,7 +62,7 @@
     });
   }
 
-  // ── 주별 목표치 (N=4, 4주 사이클 전용) ────────────────────────────────
+  // ── 주별 목표치 (N=4, 4주 사이클 전용) ────────────────────────────────────
   function targetOpenForWeek(empIdx, week, cfg) {
     return (week % cfg.cycleWeeks) === empIdx ? 1 : 2;
   }
@@ -71,7 +71,7 @@
     return (week % cfg.cycleWeeks) === lightOff ? 1 : 2;
   }
 
-  // ── 난수 ───────────────────────────────────────────────────────────────
+  // ── 난수 ───────────────────────────────────────────────────────────────────
   function mulberry32(seed) {
     return function () {
       seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -88,43 +88,7 @@
     return arr;
   }
 
-  // ── 주 단위 (오픈자, 휴무자) 쌍 생성 ──────────────────────────────────
-  function buildWeekPairs(week, cfg, rng) {
-    const openList = [], offList = [];
-    for (let e = 0; e < cfg.numEmployees; e++) {
-      for (let i = 0; i < targetOpenForWeek(e, week, cfg); i++) openList.push(e);
-      for (let i = 0; i < targetOffForWeek(e, week, cfg); i++) offList.push(e);
-    }
-    for (let attempt = 0; attempt < 3000; attempt++) {
-      const perm = shuffle(offList.slice(), rng);
-      if (perm.every((v, i) => v !== openList[i]))
-        return shuffle(openList.map((o, i) => [o, perm[i]]), rng);
-    }
-    // 백트래킹 폴백
-    function bt(idx, rem, out) {
-      if (idx === openList.length) return out.slice();
-      for (let i = 0; i < rem.length; i++) {
-        if (rem[i] !== openList[idx]) {
-          const r = bt(idx + 1, rem.filter((_, j) => j !== i), out.concat(rem[i]));
-          if (r) return r;
-        }
-      }
-      return null;
-    }
-    const perm = bt(0, offList, []);
-    if (!perm) throw new Error('주 단위 오픈/휴무 조합 생성 실패');
-    return openList.map((o, i) => [o, perm[i]]);
-  }
-
-  function assemble(weekOrders) {
-    const opener = [], offp = [];
-    weekOrders.forEach(w => w.forEach(([o, f]) => { opener.push(o); offp.push(f); }));
-    return { opener, offp };
-  }
-
-  // ── 고정 배정 슬롯 배열 빌드 ──────────────────────────────────────────
-  // days: buildCycleDays() 결과, fixedAssignments: storageData.fixedAssignments
-  // 반환: 28개 요소 배열. 각 요소 { opener:empIdx|null, offp:empIdx|null, closers:empIdx[] } | null
+  // ── 고정 배정 슬롯 배열 빌드 ──────────────────────────────────────────────
   function buildFixedSlotsArray(days, fixedAssignments, cfg) {
     return days.map(d => {
       const fix = fixedAssignments[d.iso];
@@ -142,7 +106,116 @@
     });
   }
 
-  // ── 고정 배정 위반 비용 (SA 내부에서 사용) ────────────────────────────
+  // ── 고정 배정을 고려한 주별 자유 할당량 행렬 계산 ─────────────────────────
+  // freeOpen[w][e], freeOff[w][e]: SA가 자유롭게 배정할 수 있는 횟수
+  // 고정 배정이 목표치를 초과하면 다른 주에서 차감하여 사이클 총량 유지
+  function computeFreeQuotas(calDays, fixedSlots, cfg) {
+    const N = cfg.numEmployees, W = cfg.cycleWeeks;
+
+    // 주별·직원별 고정 배정 수
+    const fixedOpen = Array.from({ length: W }, () => new Array(N).fill(0));
+    const fixedOff  = Array.from({ length: W }, () => new Array(N).fill(0));
+    calDays.forEach((d, idx) => {
+      const fix = fixedSlots[idx];
+      if (!fix) return;
+      const w = Math.floor(idx / 7);
+      if (fix.opener !== null) fixedOpen[w][fix.opener]++;
+      if (fix.offp   !== null) fixedOff[w][fix.offp]++;
+    });
+
+    // 자유 할당량 초기값: 목표 - 고정 (음수 방지)
+    const freeOpen = Array.from({ length: W }, (_, w) =>
+      Array.from({ length: N }, (_, e) => Math.max(0, targetOpenForWeek(e, w, cfg) - fixedOpen[w][e])));
+    const freeOff = Array.from({ length: W }, (_, w) =>
+      Array.from({ length: N }, (_, e) => Math.max(0, targetOffForWeek(e, w, cfg) - fixedOff[w][e])));
+
+    // 주당 자유 슬롯 수 (= 7 - 해당 주의 고정 수)
+    const freeOpenerSlots = Array.from({ length: W }, (_, w) => 7 - fixedOpen[w].reduce((a, b) => a + b, 0));
+    const freeOffpSlots   = Array.from({ length: W }, (_, w) => 7 - fixedOff[w].reduce((a, b) => a + b, 0));
+
+    // 열 합(주별 합)이 실제 자유 슬롯 수와 맞도록 조정
+    // 초과분은 가장 많이 가진 직원에서 제거하고, 그 직원의 다른 주에서 보상
+    function adjustMatrix(freeM, slotCounts) {
+      for (let w = 0; w < W; w++) {
+        let colSum = freeM[w].reduce((a, b) => a + b, 0);
+        const target = slotCounts[w];
+
+        while (colSum > target) {
+          // 이 주에서 가장 많이 배정된 직원 선택
+          let maxE = 0;
+          for (let e = 1; e < N; e++) { if (freeM[w][e] > freeM[w][maxE]) maxE = e; }
+          freeM[w][maxE]--;
+          // 다른 주에서 보상 (가장 적은 주에 추가)
+          let minW = -1, minV = Infinity;
+          for (let ww = 0; ww < W; ww++) {
+            if (ww === w && freeM[ww][maxE] < minV) { minV = freeM[ww][maxE]; minW = ww; }
+            else if (ww !== w && freeM[ww][maxE] < minV) { minV = freeM[ww][maxE]; minW = ww; }
+          }
+          // 다른 주 우선
+          let compensateW = -1, compensateV = Infinity;
+          for (let ww = 0; ww < W; ww++) {
+            if (ww !== w && freeM[ww][maxE] < compensateV) { compensateV = freeM[ww][maxE]; compensateW = ww; }
+          }
+          if (compensateW !== -1) freeM[compensateW][maxE]++;
+          colSum--;
+        }
+
+        while (colSum < target) {
+          // 이 주에서 가장 적게 배정된 직원에게 추가
+          let minE = 0;
+          for (let e = 1; e < N; e++) { if (freeM[w][e] < freeM[w][minE]) minE = e; }
+          freeM[w][minE]++;
+          // 다른 주에서 차감
+          let maxW = -1, maxV = -1;
+          for (let ww = 0; ww < W; ww++) {
+            if (ww !== w && freeM[ww][minE] > maxV) { maxV = freeM[ww][minE]; maxW = ww; }
+          }
+          if (maxW !== -1 && freeM[maxW][minE] > 0) freeM[maxW][minE]--;
+          colSum++;
+        }
+      }
+    }
+
+    adjustMatrix(freeOpen, freeOpenerSlots);
+    adjustMatrix(freeOff, freeOffpSlots);
+
+    return { freeOpen, freeOff, fixedOpen, fixedOff };
+  }
+
+  // ── 주 단위 페어 생성 (커스텀 목록) ──────────────────────────────────────
+  function buildWeekPairsFromLists(openList, offList, rng) {
+    if (openList.length === 0) return [];
+    const len = Math.min(openList.length, offList.length);
+    const ol = openList.slice(0, len);
+    const fl = offList.slice(0, len);
+
+    for (let attempt = 0; attempt < 3000; attempt++) {
+      const perm = shuffle(fl.slice(), rng);
+      if (perm.every((v, i) => v !== ol[i]))
+        return shuffle(ol.map((o, i) => [o, perm[i]]), rng);
+    }
+    function bt(idx, rem, out) {
+      if (idx === ol.length) return out.slice();
+      for (let i = 0; i < rem.length; i++) {
+        if (rem[i] !== ol[idx]) {
+          const r = bt(idx + 1, rem.filter((_, j) => j !== i), out.concat(rem[i]));
+          if (r) return r;
+        }
+      }
+      return null;
+    }
+    const perm = bt(0, fl, []);
+    if (!perm) return ol.map((o, i) => [o, fl[i % fl.length]]); // 최후 폴백
+    return ol.map((o, i) => [o, perm[i]]);
+  }
+
+  function assemble(weekOrders) {
+    const opener = [], offp = [];
+    weekOrders.forEach(w => w.forEach(([o, f]) => { opener.push(o); offp.push(f); }));
+    return { opener, offp };
+  }
+
+  // ── 고정 배정 위반 비용 ────────────────────────────────────────────────────
   function fixedCost(opener, offp, fixedSlots) {
     if (!fixedSlots) return 0;
     let c = 0;
@@ -150,7 +223,7 @@
       const fix = fixedSlots[d];
       if (!fix) continue;
       if (fix.opener !== null && opener[d] !== fix.opener) c += 10000;
-      if (fix.offp  !== null && offp[d]  !== fix.offp)  c += 10000;
+      if (fix.offp   !== null && offp[d]   !== fix.offp)  c += 10000;
       fix.closers.forEach(e => {
         if (opener[d] === e || offp[d] === e) c += 10000;
       });
@@ -158,7 +231,7 @@
     return c;
   }
 
-  // ── SA 비용 함수 ───────────────────────────────────────────────────────
+  // ── SA 하드 비용 ───────────────────────────────────────────────────────────
   function hardCost(opener, offp, cfg) {
     let c = 0;
     const N = cfg.numEmployees, D = opener.length;
@@ -168,7 +241,7 @@
     }
     for (let e = 0; e < N; e++) {
       c += Math.abs(wOpen[e] - cfg.weekendOpensPerCycle) * 100;
-      c += Math.abs(wOff[e] - cfg.weekendOffsPerCycle) * 100;
+      c += Math.abs(wOff[e]  - cfg.weekendOffsPerCycle)  * 100;
     }
     if (cfg.requireOneTwoConsecutiveOff) {
       for (let e = 0; e < N; e++) {
@@ -188,45 +261,66 @@
     return c;
   }
 
-  function softCost(opener, offp) {
+  // ── SA 소프트 비용 (고정 슬롯 제외) ──────────────────────────────────────
+  function softCost(opener, offp, fixedSlots) {
     let s = 0;
     for (let d = 0; d < opener.length - 1; d++) {
-      if (offp[d + 1] !== opener[d]) s++;           // 오픈 다음날 휴무
-      if (d % 7 === 6 && opener[d] !== opener[d + 1]) s++; // 토→일 오픈 동일인
+      // 고정 오픈 슬롯은 변경 불가 → 소프트 위반 계산 제외
+      const nextFixed = fixedSlots && fixedSlots[d + 1] && fixedSlots[d + 1].offp !== null;
+      if (!nextFixed && offp[d + 1] !== opener[d]) s++;
+      if (d % 7 === 6 && opener[d] !== opener[d + 1]) s++;
     }
     return s;
   }
 
-  // ── 메인 생성 함수 ─────────────────────────────────────────────────────
+  // ── 메인 생성 함수 ─────────────────────────────────────────────────────────
   function generateSchedule(cycleStartIso, cfg, fixedAssignments, seed) {
     cfg = Object.assign(defaultRuleConfig(), cfg || {});
-    const calDays = buildCycleDays(cycleStartIso);
+    const calDays   = buildCycleDays(cycleStartIso);
     const fixedSlots = buildFixedSlotsArray(calDays, fixedAssignments || {}, cfg);
-    const rng = mulberry32(seed == null ? Date.now() % 2147483647 : seed);
+    const rng        = mulberry32(seed == null ? Date.now() % 2147483647 : seed);
+    const W          = cfg.cycleWeeks;
+
+    // 고정 배정을 반영한 자유 할당량 계산
+    const { freeOpen, freeOff } = computeFreeQuotas(calDays, fixedSlots, cfg);
 
     let bestWeekOrders = null, bestCost = Infinity;
     const RESTARTS = 25, ITERS = 6000;
 
     const totalCost = (opener, offp) =>
-      hardCost(opener, offp, cfg) + fixedCost(opener, offp, fixedSlots) + softCost(opener, offp);
+      hardCost(opener, offp, cfg) + fixedCost(opener, offp, fixedSlots) + softCost(opener, offp, fixedSlots);
 
     for (let r = 0; r < RESTARTS; r++) {
-      const weekOrders = Array.from({ length: cfg.cycleWeeks }, (_, w) =>
-        buildWeekPairs(w, cfg, rng));
+      // 각 주별 자유 할당량으로 페어 생성
+      const weekOrders = Array.from({ length: W }, (_, w) => {
+        const openList = [], offList = [];
+        for (let e = 0; e < cfg.numEmployees; e++) {
+          for (let i = 0; i < freeOpen[w][e]; i++) openList.push(e);
+          for (let i = 0; i < freeOff[w][e]; i++) offList.push(e);
+        }
+        // 자유 슬롯 수가 다를 때 min 기준 페어 생성
+        // 나머지 슬롯은 fixedCost 페널티로 SA가 조정
+        const pairCount = Math.min(openList.length, offList.length);
+        return buildWeekPairsFromLists(openList.slice(0, pairCount), offList.slice(0, pairCount), rng);
+      });
+
+      // 고정 슬롯 적용: 페어 위치를 고정 일에 맞게 초기 배치
+      // (SA가 스왑으로 추가 최적화)
       let { opener, offp } = assemble(weekOrders);
       let cur = totalCost(opener, offp);
       let localBest = weekOrders.map(w => w.slice()), localBestCost = cur;
 
       for (let it = 0; it < ITERS; it++) {
         const T = Math.max(0.02, 1.5 * (1 - it / ITERS));
-        const w = Math.floor(rng() * cfg.cycleWeeks);
+        const w = Math.floor(rng() * W);
         const week = weekOrders[w];
-        const i = Math.floor(rng() * 7);
-        let j = Math.floor(rng() * 7);
-        while (j === i) j = Math.floor(rng() * 7);
+        if (week.length < 2) continue;
+        const i = Math.floor(rng() * week.length);
+        let j = Math.floor(rng() * week.length);
+        while (j === i) j = Math.floor(rng() * week.length);
         [week[i], week[j]] = [week[j], week[i]];
 
-        const a = assemble(weekOrders);
+        const a  = assemble(weekOrders);
         const nc = totalCost(a.opener, a.offp);
         const delta = nc - cur;
         if (delta <= 0 || rng() < Math.exp(-delta / T)) {
@@ -248,14 +342,15 @@
       return Object.assign({}, cd, { assignments });
     });
 
-    // 고정 배정 후처리 오버라이드
+    // 고정 배정 후처리 (SA 수렴 실패분 보정)
     const overrideViolations = applyFixedAssignments(days, fixedAssignments || {}, cfg);
     const report = validateSchedule(days, cfg, fixedAssignments || {});
     report.overrideViolations = overrideViolations;
     return { cycleStartIso, cfg, days, report };
   }
 
-  // ── 고정 배정 후처리 ────────────────────────────────────────────────────
+  // ── 고정 배정 후처리 ────────────────────────────────────────────────────────
+  // SA 수렴 실패 시 강제 적용 후 1O+1OFF+2C 구성을 복구
   function applyFixedAssignments(days, fixedAssignments, cfg) {
     const violations = [];
     days.forEach(day => {
@@ -274,24 +369,19 @@
         if (day.assignments[e] === 'O') opens++;
         else if (day.assignments[e] === 'OFF') offs++;
       }
-      // 초과 OFF → C로 변경
       for (let e = 0; e < cfg.numEmployees && offs > 1; e++) {
         if (!fixedEmps.has(e) && day.assignments[e] === 'OFF') { day.assignments[e] = 'C'; offs--; }
       }
-      // 초과 O → C로 변경
       for (let e = 0; e < cfg.numEmployees && opens > 1; e++) {
         if (!fixedEmps.has(e) && day.assignments[e] === 'O') { day.assignments[e] = 'C'; opens--; }
       }
-      // OFF 누락 → 비고정 C를 OFF로
       for (let e = 0; e < cfg.numEmployees && offs === 0; e++) {
         if (!fixedEmps.has(e) && day.assignments[e] === 'C') { day.assignments[e] = 'OFF'; offs++; }
       }
-      // O 누락 → 비고정 C를 O로
       for (let e = 0; e < cfg.numEmployees && opens === 0; e++) {
         if (!fixedEmps.has(e) && day.assignments[e] === 'C') { day.assignments[e] = 'O'; opens++; }
       }
 
-      // 3단계: 여전히 구성이 맞지 않으면 위반 기록
       let o = 0, f = 0, c = 0;
       for (let e = 0; e < cfg.numEmployees; e++) {
         const v = day.assignments[e];
@@ -303,17 +393,79 @@
     return violations;
   }
 
-  // ── 검증 ───────────────────────────────────────────────────────────────
+  // ── 고정 배정 사전 검증 ────────────────────────────────────────────────────
+  // 생성 전 호출: 불가능하거나 문제 있는 고정 배정 탐지
+  function validateFixedRequests(fixedAssignments, cfg, cycleStartIso) {
+    const warnings = [];
+    const calDays  = buildCycleDays(cycleStartIso);
+    const fixedSlots = buildFixedSlotsArray(calDays, fixedAssignments || {}, cfg);
+    const N = cfg.numEmployees, W = cfg.cycleWeeks;
+
+    // 주별 고정 수 집계
+    const fixedOpen = Array.from({ length: W }, () => new Array(N).fill(0));
+    const fixedOff  = Array.from({ length: W }, () => new Array(N).fill(0));
+    calDays.forEach((d, idx) => {
+      const fix = fixedSlots[idx];
+      if (!fix) return;
+      const w = Math.floor(idx / 7);
+      if (fix.opener !== null) fixedOpen[w][fix.opener]++;
+      if (fix.offp   !== null) fixedOff[w][fix.offp]++;
+    });
+
+    // 같은 날 2명 이상 동일 역할 고정 검사
+    calDays.forEach((d, idx) => {
+      const fix = fixedSlots[idx];
+      if (!fix) return;
+      if (fix.opener !== null && fix.closers.includes(fix.opener))
+        warnings.push({ type: 'conflict', iso: d.iso, msg: `${d.iso}: 동일 직원이 오픈+마감으로 중복 고정` });
+      if (fix.offp !== null && fix.closers.includes(fix.offp))
+        warnings.push({ type: 'conflict', iso: d.iso, msg: `${d.iso}: 동일 직원이 휴무+마감으로 중복 고정` });
+      if (fix.opener !== null && fix.offp !== null && fix.opener === fix.offp)
+        warnings.push({ type: 'conflict', iso: d.iso, msg: `${d.iso}: 동일 직원이 오픈+휴무로 중복 고정` });
+    });
+
+    // 주별 초과 할당량 경고
+    for (let e = 0; e < N; e++) {
+      for (let w = 0; w < W; w++) {
+        if (fixedOff[w][e] > targetOffForWeek(e, w, cfg)) {
+          warnings.push({
+            type: 'quota',
+            iso: null,
+            msg: `${w + 1}주차 직원${e}(${calDays[w * 7].iso} 주): 휴무 고정 ${fixedOff[w][e]}회 > 주 목표 ${targetOffForWeek(e, w, cfg)}회 — 다른 주 휴무 횟수가 자동 조정됩니다`,
+          });
+        }
+        if (fixedOpen[w][e] > targetOpenForWeek(e, w, cfg)) {
+          warnings.push({
+            type: 'quota',
+            iso: null,
+            msg: `${w + 1}주차 직원${e}(${calDays[w * 7].iso} 주): 오픈 고정 ${fixedOpen[w][e]}회 > 주 목표 ${targetOpenForWeek(e, w, cfg)}회 — 다른 주 오픈 횟수가 자동 조정됩니다`,
+          });
+        }
+      }
+    }
+
+    // 사이클 총 고정 수가 7을 초과하는 직원 경고
+    for (let e = 0; e < N; e++) {
+      const totalFixedOff  = fixedOff.reduce((sum, row) => sum + row[e], 0);
+      const totalFixedOpen = fixedOpen.reduce((sum, row) => sum + row[e], 0);
+      if (totalFixedOff > cfg.offsPerCycle)
+        warnings.push({ type: 'overflow', iso: null, msg: `직원${e}: 사이클 전체 휴무 고정 ${totalFixedOff}회 > 목표 ${cfg.offsPerCycle}회 — 조건 달성 불가` });
+      if (totalFixedOpen > cfg.opensPerCycle)
+        warnings.push({ type: 'overflow', iso: null, msg: `직원${e}: 사이클 전체 오픈 고정 ${totalFixedOpen}회 > 목표 ${cfg.opensPerCycle}회 — 조건 달성 불가` });
+    }
+
+    return warnings;
+  }
+
+  // ── 검증 ───────────────────────────────────────────────────────────────────
   function validateSchedule(days, cfg, fixedAssignments, holidays) {
     cfg = Object.assign(defaultRuleConfig(), cfg || {});
     fixedAssignments = fixedAssignments || {};
     holidays = holidays || [];
     const N = cfg.numEmployees, D = days.length;
 
-    // 공휴일 Set
     const holidaySet = new Set(holidays.map(h => h.iso));
 
-    // 일별 검증
     const dayChecks = days.map(d => {
       let opens = 0, offs = 0, closes = 0;
       for (let e = 0; e < N; e++) {
@@ -324,7 +476,6 @@
       return { iso: d.iso, opens, offs, closes, ok };
     });
 
-    // 직원별 집계
     const perEmployee = [];
     for (let e = 0; e < N; e++) {
       let opens = 0, offs = 0, closes = 0;
@@ -355,13 +506,12 @@
       if (runLen > 0) consecOffRuns.push({ start: runStart, len: runLen });
       const twoConsecCount = consecOffRuns.filter(r => r.len >= 2).length;
 
-      // 주별 분포 검사
       const sortedO = weeklyOpens.slice().sort((a, b) => a - b);
       const weeklyOpenDistOk = sortedO[0] === 1 && sortedO[1] === 2 && sortedO[2] === 2 && sortedO[3] === 2;
       const sortedF = weeklyOffs.slice().sort((a, b) => a - b);
       const weeklyOffDistOk = sortedF[0] === 1 && sortedF[1] === 2 && sortedF[2] === 2 && sortedF[3] === 2;
       const lightOpenWeek = weeklyOpens.indexOf(Math.min(...weeklyOpens));
-      const lightOffWeek = weeklyOffs.indexOf(Math.min(...weeklyOffs));
+      const lightOffWeek  = weeklyOffs.indexOf(Math.min(...weeklyOffs));
       const separateWeeksOk = weeklyOpenDistOk && weeklyOffDistOk && lightOpenWeek !== lightOffWeek;
 
       const closesTarget = cfg.cycleWeeks * 7 - cfg.opensPerCycle - cfg.offsPerCycle;
@@ -382,7 +532,6 @@
       });
     }
 
-    // 소프트 조건 집계
     let openNextDayViolations = 0;
     for (let d = 0; d < D - 1; d++) {
       for (let e = 0; e < N; e++) {
@@ -446,6 +595,7 @@
     getCurrentCycleIndex,
     generateSchedule,
     validateSchedule,
+    validateFixedRequests,
     applyFixedAssignments,
   };
 });
