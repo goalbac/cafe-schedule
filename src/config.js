@@ -59,7 +59,7 @@ const AppConfig = (function () {
     cycleWeeks: 4,
     opensPerCycle: 7,               // 1인당 오픈 7회
     offsPerCycle: 7,                // 1인당 휴무 7일
-    maxConsecutiveWork: 4,          // 최대 연속 근무 4일
+    maxConsecutiveWork: 5,          // 최대 연속 근무 5일
     weekendOpensPerCycle: 2,        // 주말 오픈 2회
     weekendOffsPerCycle: 2,         // 주말 휴무 2일
     requireOneTwoConsecutiveOff: true,

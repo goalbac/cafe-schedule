@@ -18,7 +18,7 @@
       cycleWeeks: 4,
       opensPerCycle: 7,
       offsPerCycle: 7,
-      maxConsecutiveWork: 4,
+      maxConsecutiveWork: 5,
       weekendOpensPerCycle: 2,
       weekendOffsPerCycle: 2,
       requireOneTwoConsecutiveOff: true,
@@ -200,58 +200,129 @@
     return c;
   }
 
+  // ── 연속 근무 블록 목록 반환 [{start, len}] ─────────────────────────────────
+  function workBlocks(e, offp, D) {
+    const blocks = [];
+    let start = -1, len = 0;
+    for (let d = 0; d <= D; d++) {
+      const working = d < D && offp[d] !== e;
+      if (working) { if (len === 0) start = d; len++; }
+      else if (len > 0) { blocks.push({ start, len }); len = 0; }
+    }
+    return blocks;
+  }
+
   // ── SA 하드 비용 ───────────────────────────────────────────────────────────
   function hardCost(opener, offp, cfg) {
     let c = 0;
     const N = cfg.numEmployees, D = opener.length;
+
+    // 우선순위 5·6: 주말 오픈/휴무 균등 (가중치 300)
     const wOpen = new Array(N).fill(0), wOff = new Array(N).fill(0);
     for (let d = 0; d < D; d++) {
       if (d % 7 === 0 || d % 7 === 6) { wOpen[opener[d]]++; wOff[offp[d]]++; }
     }
     for (let e = 0; e < N; e++) {
-      c += Math.abs(wOpen[e] - cfg.weekendOpensPerCycle) * 100;
-      c += Math.abs(wOff[e]  - cfg.weekendOffsPerCycle)  * 100;
+      c += Math.abs(wOpen[e] - cfg.weekendOpensPerCycle) * 300;
+      c += Math.abs(wOff[e]  - cfg.weekendOffsPerCycle)  * 300;
     }
+
+    // 우선순위 7: 최대 연속 근무 (가중치 300/day)
+    for (let e = 0; e < N; e++) {
+      let streak = 0;
+      for (let d = 0; d < D; d++) {
+        if (offp[d] === e) streak = 0;
+        else { streak++; if (streak > cfg.maxConsecutiveWork) c += 300; }
+      }
+    }
+
+    // 우선순위 8: 6일 연속 근무 시 오픈 ≥2 (고정 배정 예외 케이스, 가중치 150)
+    for (let e = 0; e < N; e++) {
+      workBlocks(e, offp, D).forEach(({ start, len }) => {
+        if (len < 6) return;
+        let opens = 0;
+        for (let d = start; d < start + len; d++) if (opener[d] === e) opens++;
+        if (opens < 2) c += 150;
+      });
+    }
+
+    // 우선순위 9: 2연속 휴무 최소 1회 (가중치 200)
     if (cfg.requireOneTwoConsecutiveOff) {
       for (let e = 0; e < N; e++) {
         let found = false;
         for (let d = 0; d < D - 1 && !found; d++)
           if (offp[d] === e && offp[d + 1] === e) found = true;
-        if (!found) c += 150;
+        if (!found) c += 200;
       }
     }
+
+    // 우선순위 11: 1~3일 연속 근무 블록 → 전부 마감 (가중치 80/violation)
     for (let e = 0; e < N; e++) {
-      let streak = 0;
-      for (let d = 0; d < D; d++) {
-        if (offp[d] === e) streak = 0;
-        else { streak++; if (streak > cfg.maxConsecutiveWork) c += 100; }
-      }
+      workBlocks(e, offp, D).forEach(({ start, len }) => {
+        if (len > 3) return;
+        for (let d = start; d < start + len; d++) {
+          if (opener[d] === e) c += 80; // 단기 블록인데 오픈이면 위반
+        }
+      });
     }
+
     return c;
   }
 
-  // ── SA 소프트 비용 (고정 슬롯 제외) ──────────────────────────────────────
+  // ── SA 소프트 비용 ────────────────────────────────────────────────────────
   function softCost(opener, offp, fixedSlots, calDays, cfg) {
     let s = 0;
-    const hClosers  = (cfg && cfg.holidayCloserEmployees) || [];
-    const holSet    = (cfg && cfg._holidaySet) || new Set();
+    const N       = cfg.numEmployees;
+    const D       = opener.length;
+    const hClosers = (cfg && cfg.holidayCloserEmployees) || [];
+    const holSet   = (cfg && cfg._holidaySet) || new Set();
 
-    for (let d = 0; d < opener.length - 1; d++) {
-      // 고정 오픈 슬롯은 변경 불가 → 소프트 위반 계산 제외
-      const nextFixed = fixedSlots && fixedSlots[d + 1] && fixedSlots[d + 1].offp !== null;
-      if (!nextFixed && offp[d + 1] !== opener[d]) s++;
-      if (d % 7 === 6 && opener[d] !== opener[d + 1]) s++;
-    }
-
-    // 주말·공휴일 마감 선호 직원이 C가 아닐 때 페널티
+    // 소프트 1: 공휴일·주말 마감 선호 직원 → C 배치 우선 (가중치 4)
     if (hClosers.length > 0 && calDays) {
       for (let d = 0; d < calDays.length; d++) {
         const wd = calDays[d].weekday;
         const isWkdOrHol = wd === 0 || wd === 6 || holSet.has(calDays[d].iso);
         if (!isWkdOrHol) continue;
-        // 선호 직원 중 누군가가 C(마감)이면 OK
         const anyCloser = hClosers.some(e => e !== opener[d] && e !== offp[d]);
-        if (!anyCloser) s += 2;
+        if (!anyCloser) s += 4;
+      }
+    }
+
+    // 소프트 2: 연속 근무 블록 내 오픈 연속 (가중치 2/gap)
+    for (let e = 0; e < N; e++) {
+      workBlocks(e, offp, D).forEach(({ start, len }) => {
+        const openDays = [];
+        for (let d = start; d < start + len; d++) if (opener[d] === e) openDays.push(d);
+        if (openDays.length >= 2) {
+          // span - count = 블록 내 오픈들 사이에 끼인 비-오픈 날 수
+          const gap = (openDays[openDays.length - 1] - openDays[0] + 1) - openDays.length;
+          s += gap * 2;
+        }
+      });
+    }
+
+    // 소프트 3: 토·일 동일 오픈 (가중치 3)
+    for (let d = 0; d < D - 1; d++) {
+      if (d % 7 === 6 && opener[d] !== opener[d + 1]) s += 3;
+    }
+
+    // 소프트 4: 휴무 전날 오픈 — 오늘 오픈한 사람이 내일 휴무이면 OK, 아니면 위반 (가중치 1)
+    for (let d = 0; d < D - 1; d++) {
+      const nextFixed = fixedSlots && fixedSlots[d + 1] && fixedSlots[d + 1].offp !== null;
+      if (!nextFixed && offp[d + 1] !== opener[d]) s += 1;
+    }
+
+    // 소프트 5: 휴무 다음날 마감 — 오늘 쉰 사람이 내일 오픈이면 위반 (가중치 2)
+    for (let d = 0; d < D - 1; d++) {
+      if (opener[d + 1] === offp[d]) s += 2; // 휴무자가 다음날 오픈
+    }
+
+    // 소프트 6: 주별 오픈 분포 (3주×2+1주×1 목표, 가중치 1/편차)
+    const weeklyO = Array.from({ length: N }, () => [0, 0, 0, 0]);
+    for (let d = 0; d < D; d++) weeklyO[opener[d]][Math.floor(d / 7)]++;
+    for (let e = 0; e < N; e++) {
+      for (let w = 0; w < cfg.cycleWeeks; w++) {
+        s += Math.abs(weeklyO[e][w] - targetOpenForWeek(e, w, cfg)) * 1;
       }
     }
 
@@ -568,6 +639,33 @@
       const weeklyOffDistFixedCause = !weeklyOffDistOk && weeklyOffs.some((cnt, w) =>
         cnt !== targetOffForWeek(e, w, cfg) && fixedWeeklyOffs[w] > 0);
 
+      // 하드 8: 6일 연속 근무 시 오픈 ≥2
+      const blocks = [];
+      { let bs = -1, bl = 0;
+        for (let d = 0; d <= D; d++) {
+          const w = d < D && days[d].assignments[e] !== 'OFF';
+          if (w) { if (bl === 0) bs = d; bl++; }
+          else if (bl > 0) { blocks.push({ start: bs, len: bl }); bl = 0; }
+        }
+      }
+      let sixDayStreakCount = 0, sixDayStreakOpenOk = true;
+      blocks.forEach(({ start, len }) => {
+        if (len < 6) return;
+        sixDayStreakCount++;
+        const opens6 = days.slice(start, start + len).filter(d => d.assignments[e] === 'O').length;
+        if (opens6 < 2) sixDayStreakOpenOk = false;
+      });
+
+      // 하드 11: 1~3일 연속 근무 블록 → 전부 마감
+      let shortBlockViolations = 0;
+      blocks.forEach(({ start, len }) => {
+        if (len > 3) return;
+        for (let d = start; d < start + len; d++) {
+          if (days[d].assignments[e] === 'O') shortBlockViolations++;
+        }
+      });
+      const shortBlockAllCloseOk = shortBlockViolations === 0;
+
       const closesTarget = cfg.cycleWeeks * 7 - cfg.opensPerCycle - cfg.offsPerCycle;
       perEmployee.push({
         employeeIndex: e,
@@ -579,22 +677,50 @@
         weekendOpenTarget: cfg.weekendOpensPerCycle,
         weekendOffTarget: cfg.weekendOffsPerCycle,
         maxStreak, maxStreakOk: maxStreak <= cfg.maxConsecutiveWork,
+        sixDayStreakCount, sixDayStreakOpenOk,
         twoConsecCount, twoConsecOk: !cfg.requireOneTwoConsecutiveOff || twoConsecCount >= 1,
         weeklyOpens, weeklyOffs,
         weeklyOpenDistOk, weeklyOffDistOk,
         weeklyOpenDistFixedCause, weeklyOffDistFixedCause,
-        lightOpenWeek, lightOffWeek, separateWeeksOk,
+        shortBlockViolations, shortBlockAllCloseOk,
+        lightOpenWeek, lightOffWeek,
       });
     }
 
-    let openNextDayViolations = 0;
-    for (let d = 0; d < D - 1; d++) {
-      for (let e = 0; e < N; e++) {
-        if (days[d].assignments[e] === 'O' && days[d + 1].assignments[e] !== 'OFF')
-          openNextDayViolations++;
+    // ── 소프트 결과 계산 ─────────────────────────────────────────────────────
+
+    // 소프트 1: 공휴일·주말 마감 선호
+    let holidayCloserViolations = 0, holidayCloserTotal = 0;
+    const hClosers = cfg.holidayCloserEmployees || [];
+    if (hClosers.length > 0) {
+      days.forEach(d => {
+        const isWkdOrHol = d.weekday === 0 || d.weekday === 6 || holidaySet.has(d.iso);
+        if (!isWkdOrHol) return;
+        holidayCloserTotal++;
+        const anyCloser = hClosers.some(e => d.assignments[e] === 'C');
+        if (!anyCloser) holidayCloserViolations++;
+      });
+    }
+
+    // 소프트 2: 블록 내 오픈 연속 — 총 비연속 점수
+    let openConsecutiveScore = 0;
+    for (let e = 0; e < N; e++) {
+      let bStart = -1, bLen = 0;
+      for (let d = 0; d <= D; d++) {
+        const working = d < D && days[d].assignments[e] !== 'OFF';
+        if (working) { if (bLen === 0) bStart = d; bLen++; }
+        else if (bLen > 0) {
+          const openIdx = [];
+          for (let bd = bStart; bd < bStart + bLen; bd++)
+            if (days[bd].assignments[e] === 'O') openIdx.push(bd);
+          if (openIdx.length >= 2)
+            openConsecutiveScore += (openIdx[openIdx.length - 1] - openIdx[0] + 1) - openIdx.length;
+          bLen = 0;
+        }
       }
     }
 
+    // 소프트 3: 토·일 동일 오픈
     let weekendSameOpenerViolations = 0, weekendPairs = 0;
     for (let d = 0; d < D - 1; d++) {
       if (days[d].weekday === 6 && days[d + 1].weekday === 0) {
@@ -608,22 +734,33 @@
       }
     }
 
-    let holidayCloserViolations = 0, holidayCloserTotal = 0;
-    const hClosers = cfg.holidayCloserEmployees || [];
-    if (hClosers.length > 0) {
-      days.forEach(d => {
-        const isWkdOrHol = d.weekday === 0 || d.weekday === 6 || holidaySet.has(d.iso);
-        if (!isWkdOrHol) return;
-        holidayCloserTotal++;
-        const anyCloser = hClosers.some(e => d.assignments[e] === 'C');
-        if (!anyCloser) holidayCloserViolations++;
-      });
+    // 소프트 4: 휴무 전날 오픈 (오늘 오픈한 사람이 내일 OFF가 아닌 경우)
+    let offPrevDayOpenViolations = 0;
+    for (let d = 0; d < D - 1; d++) {
+      for (let e = 0; e < N; e++) {
+        if (days[d].assignments[e] === 'O' && days[d + 1].assignments[e] !== 'OFF')
+          offPrevDayOpenViolations++;
+      }
     }
 
+    // 소프트 5: 휴무 다음날 마감 (오늘 OFF인 사람이 내일 오픈이면 위반)
+    let offNextDayOpenViolations = 0;
+    for (let d = 0; d < D - 1; d++) {
+      for (let e = 0; e < N; e++) {
+        if (days[d].assignments[e] === 'OFF' && days[d + 1].assignments[e] === 'O')
+          offNextDayOpenViolations++;
+      }
+    }
+
+    // ── 하드 OK 판정 ─────────────────────────────────────────────────────────
     const hardOk = dayChecks.every(d => d.ok) && perEmployee.every(pe =>
-      pe.opens === pe.opensTarget && pe.offs === pe.offsTarget &&
+      pe.opens === pe.opensTarget && pe.offs === pe.offsTarget && pe.closes === pe.closesTarget &&
       pe.weekendOpen === pe.weekendOpenTarget && pe.weekendOff === pe.weekendOffTarget &&
-      pe.maxStreakOk && pe.twoConsecOk && pe.weeklyOpenDistOk && pe.weeklyOffDistOk && pe.separateWeeksOk
+      pe.maxStreakOk &&
+      pe.sixDayStreakOpenOk &&
+      pe.twoConsecOk &&
+      (pe.weeklyOffDistOk || pe.weeklyOffDistFixedCause) &&
+      pe.shortBlockAllCloseOk
     );
 
     return {
@@ -631,9 +768,12 @@
       perEmployee,
       cycles: [{ cycleIndex: 0, dayStart: 0, dayEnd: D, perEmployee }],
       softResults: {
-        openNextDayOff: { violations: openNextDayViolations },
-        weekendSameOpener: { violations: weekendSameOpenerViolations, total: weekendPairs },
-        holidayCloser: { violations: holidayCloserViolations, total: holidayCloserTotal },
+        holidayCloser:      { violations: holidayCloserViolations, total: holidayCloserTotal },
+        openConsecutive:    { score: openConsecutiveScore },
+        weekendSameOpener:  { violations: weekendSameOpenerViolations, total: weekendPairs },
+        offPrevDayOpen:     { violations: offPrevDayOpenViolations },
+        offNextDayOpen:     { violations: offNextDayOpenViolations },
+        weeklyOpenDist:     { perEmployee: perEmployee.map(pe => ({ ok: pe.weeklyOpenDistOk, fixedCause: pe.weeklyOpenDistFixedCause, vals: pe.weeklyOpens })) },
       },
       overrideViolations: [],
       allHardOk: hardOk,

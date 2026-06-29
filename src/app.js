@@ -573,32 +573,36 @@
       </tr>`;
     };
 
-    tbl += globalRow('일별 구성', '오픈1·마감2·휴무1', dayOk,
+    // 하드 우선순위 순서로 표시
+    tbl += globalRow('① 일별 구성', '오픈1·마감2·휴무1', dayOk,
       report.overrideViolations.length ? `(충돌 ${report.overrideViolations.length}건)` : '');
-    tbl += empRow('오픈 횟수',  `${cfg.opensPerCycle}회`, pe.map(p => `${p.opens}/${p.opensTarget}`),   (_, p) => p.opens  === p.opensTarget);
-    tbl += empRow('마감 횟수',  `${cT}회`,               pe.map(p => `${p.closes}/${p.closesTarget}`), (_, p) => p.closes === p.closesTarget);
-    tbl += empRow('휴무 일수',  `${cfg.offsPerCycle}일`, pe.map(p => `${p.offs}/${p.offsTarget}`),     (_, p) => p.offs   === p.offsTarget);
-    tbl += empRow('주별 오픈 분포', '3주×2+1주×1',       pe.map(p => `[${p.weeklyOpens.join(',')}]`),  (_, p) => p.weeklyOpenDistOk, (_, p) => p.weeklyOpenDistFixedCause);
-    tbl += empRow('주별 휴무 분포', '3주×2+1주×1',       pe.map(p => `[${p.weeklyOffs.join(',')}]`),   (_, p) => p.weeklyOffDistOk,  (_, p) => p.weeklyOffDistFixedCause);
-    tbl += empRow('오픈≠휴무 주', '다른 주',             pe.map(p => `O:${p.lightOpenWeek+1}주 H:${p.lightOffWeek+1}주`), (_, p) => p.separateWeeksOk);
-    tbl += empRow('주말 오픈', `${cfg.weekendOpensPerCycle}회`, pe.map(p => `${p.weekendOpen}/${p.weekendOpenTarget}`), (_, p) => p.weekendOpen === p.weekendOpenTarget);
-    tbl += empRow('주말 휴무', `${cfg.weekendOffsPerCycle}일`,  pe.map(p => `${p.weekendOff}/${p.weekendOffTarget}`),   (_, p) => p.weekendOff  === p.weekendOffTarget);
-    tbl += empRow('최대 연속', `≤${cfg.maxConsecutiveWork}일`,  pe.map(p => `${p.maxStreak}일`),          (_, p) => p.maxStreakOk);
-    tbl += empRow('2연속 휴무', '≥1회',                  pe.map(p => `${p.twoConsecCount}회`),           (_, p) => p.twoConsecOk);
+    tbl += empRow('② 휴무 일수',  `${cfg.offsPerCycle}일`,  pe.map(p => `${p.offs}/${p.offsTarget}`),     (_, p) => p.offs   === p.offsTarget,   (_, p) => false);
+    tbl += empRow('③ 마감 횟수',  `${cT}회`,                pe.map(p => `${p.closes}/${p.closesTarget}`), (_, p) => p.closes === p.closesTarget, (_, p) => false);
+    tbl += empRow('④ 오픈 횟수',  `${cfg.opensPerCycle}회`, pe.map(p => `${p.opens}/${p.opensTarget}`),   (_, p) => p.opens  === p.opensTarget,  (_, p) => false);
+    tbl += empRow('⑤ 주말 휴무',  `${cfg.weekendOffsPerCycle}일`,  pe.map(p => `${p.weekendOff}/${p.weekendOffTarget}`),   (_, p) => p.weekendOff  === p.weekendOffTarget);
+    tbl += empRow('⑥ 주말 오픈',  `${cfg.weekendOpensPerCycle}회`, pe.map(p => `${p.weekendOpen}/${p.weekendOpenTarget}`), (_, p) => p.weekendOpen === p.weekendOpenTarget);
+    tbl += empRow('⑦ 최대 연속',  `≤${cfg.maxConsecutiveWork}일`,  pe.map(p => `${p.maxStreak}일`),         (_, p) => p.maxStreakOk);
+    tbl += empRow('⑧ 6일연속→오픈≥2', '오픈 2회 이상',
+      pe.map(p => p.sixDayStreakCount > 0 ? `${p.sixDayStreakCount}회 발생` : '없음'),
+      (_, p) => p.sixDayStreakOpenOk);
+    tbl += empRow('⑨ 2연속 휴무', '≥1회',                  pe.map(p => `${p.twoConsecCount}회`),          (_, p) => p.twoConsecOk);
+    tbl += empRow('⑩ 주별 휴무 분포', '3주×2+1주×1',       pe.map(p => `[${p.weeklyOffs.join(',')}]`),    (_, p) => p.weeklyOffDistOk, (_, p) => p.weeklyOffDistFixedCause);
+    tbl += empRow('⑪ 단기블록 전부 마감', '1~3일 블록',
+      pe.map(p => p.shortBlockViolations > 0 ? `위반 ${p.shortBlockViolations}일` : '없음'),
+      (_, p) => p.shortBlockAllCloseOk);
     tbl += `</tbody></table>`;
 
     const hardAllOk = dayOk && pe.every(p =>
-      p.opens === p.opensTarget && p.offs === p.offsTarget && p.closes === p.closesTarget &&
-      p.weekendOpen === p.weekendOpenTarget && p.weekendOff === p.weekendOffTarget &&
-      p.maxStreakOk && p.twoConsecOk &&
-      (p.weeklyOpenDistOk || p.weeklyOpenDistFixedCause) &&
-      (p.weeklyOffDistOk  || p.weeklyOffDistFixedCause) &&
-      p.separateWeeksOk);
+      p.offs === p.offsTarget && p.closes === p.closesTarget && p.opens === p.opensTarget &&
+      p.weekendOff === p.weekendOffTarget && p.weekendOpen === p.weekendOpenTarget &&
+      p.maxStreakOk && p.sixDayStreakOpenOk && p.twoConsecOk &&
+      (p.weeklyOffDistOk || p.weeklyOffDistFixedCause) &&
+      p.shortBlockAllCloseOk);
 
     hardConditionsEl.innerHTML = overrideNote + tbl;
     hardOverallEl.textContent  = hardAllOk ? '✅' : '❌';
 
-    // 소프트
+    // 소프트 우선순위 순서로 표시
     const sr = report.softResults;
     const softRow = (name, ok, detail) =>
       `<tr class="${ok ? 'ct-ok' : 'ct-warn'}">
@@ -606,14 +610,46 @@
         <td colspan="${names.length}" class="ct-global">${ok ? '✅' : '⚠️'} ${escHtml(detail)}</td>
       </tr>`;
 
+    // 소프트 6: 주별 오픈 분포 — 직원별 행으로 표시
+    const softEmpRow = (name, vals, okFn, warnFn) => {
+      const cells = vals.map((v, i) => {
+        const ok   = okFn(v, i);
+        const warn = !ok && warnFn && warnFn(v, i);
+        const cls  = ok ? 'ct-ok' : warn ? 'ct-warn' : 'ct-warn';
+        const icon = ok ? '✅' : '⚠️';
+        return `<td class="ct-emp ${cls}">${v} ${icon}</td>`;
+      });
+      const allOk = vals.every((v, i) => okFn(v, i));
+      return `<tr class="${allOk ? 'ct-ok' : 'ct-warn'}">
+        <td class="ct-name">${name}</td><td class="ct-cfg">선호</td>
+        ${cells.join('')}
+      </tr>`;
+    };
+
     let softTbl = `<table class="cond-table"><tbody>`;
-    softTbl += softRow('오픈 다음날 휴무', sr.openNextDayOff.violations === 0, `위반 ${sr.openNextDayOff.violations}회`);
-    softTbl += softRow('토·일 동일 오픈', sr.weekendSameOpener.violations === 0, `위반 ${sr.weekendSameOpener.violations}/${sr.weekendSameOpener.total || 0}회`);
     if (cfg.holidayCloserEmployees.length > 0)
-      softTbl += softRow('공휴일 마감 선호', sr.holidayCloser.violations === 0, `위반 ${sr.holidayCloser.violations}/${sr.holidayCloser.total || 0}회`);
+      softTbl += softRow('① 공휴일·주말 마감 선호', sr.holidayCloser.violations === 0,
+        `위반 ${sr.holidayCloser.violations}/${sr.holidayCloser.total || 0}회`);
+    softTbl += softRow('② 블록 내 오픈 연속', sr.openConsecutive.score === 0,
+      sr.openConsecutive.score === 0 ? '완전 연속' : `비연속 ${sr.openConsecutive.score}칸`);
+    softTbl += softRow('③ 토·일 동일 오픈', sr.weekendSameOpener.violations === 0,
+      `위반 ${sr.weekendSameOpener.violations}/${sr.weekendSameOpener.total || 0}회`);
+    softTbl += softRow('④ 휴무 전날 오픈', sr.offPrevDayOpen.violations === 0,
+      `위반 ${sr.offPrevDayOpen.violations}회`);
+    softTbl += softRow('⑤ 휴무 다음날 마감', sr.offNextDayOpen.violations === 0,
+      `위반 ${sr.offNextDayOpen.violations}회`);
+    softTbl += softEmpRow('⑥ 주별 오픈 분포',
+      sr.weeklyOpenDist.perEmployee.map(p => `[${p.vals.join(',')}]`),
+      (_, i) => sr.weeklyOpenDist.perEmployee[i].ok,
+      (_, i) => sr.weeklyOpenDist.perEmployee[i].fixedCause);
     softTbl += `</tbody></table>`;
 
-    const softAllOk = sr.openNextDayOff.violations === 0 && sr.weekendSameOpener.violations === 0 && sr.holidayCloser.violations === 0;
+    const softAllOk = sr.weekendSameOpener.violations === 0 &&
+      sr.holidayCloser.violations === 0 &&
+      sr.openConsecutive.score === 0 &&
+      sr.offPrevDayOpen.violations === 0 &&
+      sr.offNextDayOpen.violations === 0 &&
+      sr.weeklyOpenDist.perEmployee.every(p => p.ok);
     softConditionsEl.innerHTML = softTbl;
     softOverallEl.textContent  = softAllOk ? '✅' : '⚠️';
   }
